@@ -30,6 +30,8 @@
   "language": "Language",
   "view_list": "List",
   "view_gallery": "Gallery",
+  "gallery_show_all": "Show All",
+  "gallery_show_active": "Active Only",
   "account": {
     "title": "Account",
     "plan": "Plan",

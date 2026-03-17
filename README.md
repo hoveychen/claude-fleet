@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/mascot.png" width="120" alt="Captain Octo — Claude Fleet mascot" />
+<img src="docs/hero.png" width="640" alt="Claude Fleet — Mission control for your Claude Code agents" />
 
 # Claude Fleet
 
@@ -18,9 +18,6 @@ Monitor every session, track token throughput, and inspect full conversation his
 
 ---
 
-<div align="center">
-<img src="docs/hero_architecture.png" alt="Claude Fleet — how it works" width="860" />
-</div>
 
 ## What is Claude Fleet?
 
@@ -34,11 +31,6 @@ When you run Claude Code across multiple projects simultaneously — or lean on 
 
 ## Features
 
-<div align="center">
-<img src="docs/features_grid.png" alt="Feature overview" width="800" />
-</div>
-
-<br/>
 
 | | Feature | Details |
 |---|---|---|
@@ -50,12 +42,6 @@ When you run Claude Code across multiple projects simultaneously — or lean on 
 | 👤 | **Account & Usage** | Displays your Claude plan, organization, and rate-limit utilization (5-hour / 7-day windows) |
 | 🎨 | **Dark / Light / System Theme** | Follows your OS preference or override it manually |
 | 🌐 | **i18n** | Ships with English and Chinese; adding a locale is a single JSON file |
-
-### Screenshot
-
-<div align="center">
-<img src="docs/screenshot_messages.png" alt="Full message inspection — conversation history with syntax highlighting and thinking blocks" width="700" />
-</div>
 
 ---
 
@@ -70,8 +56,6 @@ Download the latest pre-built binary for your platform from the [Releases page](
 | Windows | x64 | `Claude.Fleet_x.y.z_x64-setup.exe` |
 | Windows | ARM64 | `Claude.Fleet_x.y.z_arm64-setup.exe` |
 | Linux | x86\_64 | `claude-fleet_x.y.z_amd64.deb` / `.AppImage` |
-
-> **macOS note:** The app is not notarized. After mounting the DMG, right-click → Open to bypass Gatekeeper on first launch.
 
 ### Prerequisites
 

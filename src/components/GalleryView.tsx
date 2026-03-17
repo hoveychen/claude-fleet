@@ -46,6 +46,51 @@ function GalleryRow({ main, subagents, onSelect }: RowProps) {
   );
 }
 
+// ── Helper: build rows from a flat session list ───────────────────────────
+
+function buildRows(
+  sessions: SessionInfo[],
+  onSelect: (s: SessionInfo) => void
+) {
+  const mains = sessions.filter((s) => !s.isSubagent);
+  const subByParent = new Map<string, SessionInfo[]>();
+  for (const s of sessions) {
+    if (s.isSubagent && s.parentSessionId) {
+      const arr = subByParent.get(s.parentSessionId) ?? [];
+      arr.push(s);
+      subByParent.set(s.parentSessionId, arr);
+    }
+  }
+  const orphans = sessions.filter(
+    (s) =>
+      s.isSubagent &&
+      (!s.parentSessionId || !mains.find((m) => m.id === s.parentSessionId))
+  );
+
+  const sortedMains = [
+    ...mains.filter(isActive),
+    ...mains.filter((s) => !isActive(s)),
+  ];
+
+  return (
+    <>
+      {sortedMains.map((main) => (
+        <GalleryRow
+          key={main.jsonlPath}
+          main={main}
+          subagents={subByParent.get(main.id) ?? []}
+          onSelect={onSelect}
+        />
+      ))}
+      {orphans.map((s) => (
+        <div key={s.jsonlPath} className={styles.orphan_card} onClick={() => onSelect(s)}>
+          <SessionCard session={s} isSelected={false} onClick={() => onSelect(s)} />
+        </div>
+      ))}
+    </>
+  );
+}
+
 // ── GalleryView ───────────────────────────────────────────────────────────
 
 export function GalleryView() {
@@ -53,6 +98,7 @@ export function GalleryView() {
   const sessions = useSessionsStore((s) => s.sessions);
   const [inspecting, setInspecting] = useState<SessionInfo | null>(null);
   const [filter, setFilter] = useState("");
+  const [showAll, setShowAll] = useState(false);
 
   // Promote idle main sessions that have active subagents → delegating
   const activeSubagentParentIds = new Set(
@@ -71,12 +117,13 @@ export function GalleryView() {
       : s
   );
 
-  // Gallery only shows active sessions
   const activeSessions = promoted.filter(isActive);
 
-  // Filter
+  // Filter source: active only or all sessions
+  const filterSource = showAll ? promoted : activeSessions;
+
   const filtered = filter
-    ? activeSessions.filter((s) => {
+    ? filterSource.filter((s) => {
         const q = filter.toLowerCase();
         return (
           s.workspaceName.toLowerCase().includes(q) ||
@@ -85,30 +132,11 @@ export function GalleryView() {
           s.ideName?.toLowerCase().includes(q)
         );
       })
-    : activeSessions;
+    : filterSource;
 
-  // Group: main sessions + their subagents
-  const mains = filtered.filter((s) => !s.isSubagent);
-  const subByParent = new Map<string, SessionInfo[]>();
-  for (const s of filtered) {
-    if (s.isSubagent && s.parentSessionId) {
-      const arr = subByParent.get(s.parentSessionId) ?? [];
-      arr.push(s);
-      subByParent.set(s.parentSessionId, arr);
-    }
-  }
-  // Orphan subagents (their parent isn't in filtered)
-  const orphans = filtered.filter(
-    (s) =>
-      s.isSubagent &&
-      (!s.parentSessionId || !mains.find((m) => m.id === s.parentSessionId))
-  );
-
-  // Sort: active first
-  const sortedMains = [
-    ...mains.filter(isActive),
-    ...mains.filter((s) => !isActive(s)),
-  ];
+  // When showAll, split into active and recent groups
+  const filteredActive = showAll ? filtered.filter(isActive) : filtered;
+  const filteredRecent = showAll ? filtered.filter((s) => !isActive(s)) : [];
 
   return (
     <div className={styles.root}>
@@ -124,31 +152,42 @@ export function GalleryView() {
         <span className={styles.count}>
           {activeSessions.length} {t("active")}
         </span>
+        <button
+          className={`${styles.toggle_btn} ${showAll ? styles.toggle_btn_active : ""}`}
+          onClick={() => setShowAll((v) => !v)}
+          title={showAll ? t("gallery_show_active") : t("gallery_show_all")}
+        >
+          {showAll ? t("gallery_show_active") : t("gallery_show_all")}
+        </button>
       </div>
 
       {/* Grid */}
       <div className={styles.grid}>
-        {sortedMains.map((main) => (
-          <GalleryRow
-            key={main.jsonlPath}
-            main={main}
-            subagents={subByParent.get(main.id) ?? []}
-            onSelect={setInspecting}
-          />
-        ))}
-
-        {orphans.map((s) => (
-          <div
-            key={s.jsonlPath}
-            className={styles.orphan_card}
-            onClick={() => setInspecting(s)}
-          >
-            <SessionCard session={s} isSelected={false} onClick={() => setInspecting(s)} />
-          </div>
-        ))}
-
-        {filtered.length === 0 && (
-          <p className={styles.empty}>{t("no_sessions")}</p>
+        {showAll ? (
+          <>
+            {filteredActive.length > 0 && (
+              <div className={styles.section}>
+                <div className={styles.section_label}>{t("active")}</div>
+                {buildRows(filteredActive, setInspecting)}
+              </div>
+            )}
+            {filteredRecent.length > 0 && (
+              <div className={styles.section}>
+                <div className={styles.section_label}>{t("recent")}</div>
+                {buildRows(filteredRecent, setInspecting)}
+              </div>
+            )}
+            {filtered.length === 0 && (
+              <p className={styles.empty}>{t("no_sessions")}</p>
+            )}
+          </>
+        ) : (
+          <>
+            {buildRows(filteredActive, setInspecting)}
+            {filteredActive.length === 0 && (
+              <p className={styles.empty}>{t("no_sessions")}</p>
+            )}
+          </>
         )}
       </div>
 

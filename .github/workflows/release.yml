@@ -92,6 +92,28 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev
 
+      # ── macOS code signing ─────────────────────────────────────────────────
+      - name: Import macOS signing certificate
+        if: runner.os == 'macOS'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_CERTIFICATE" ]; then
+            echo "MACOS_CERTIFICATE secret not set — skipping certificate import"
+            exit 0
+          fi
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security import certificate.p12 -k build.keychain \
+            -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple: -s -k "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          rm certificate.p12
+
       # ── Frontend ───────────────────────────────────────────────────────────
       - name: Install frontend dependencies
         run: npm ci
@@ -101,8 +123,12 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Disable update checks and auto-publish — we handle upload ourselves
           TAURI_SIGNING_PRIVATE_KEY: ''
+          # macOS signing & notarization (only used on macOS runners)
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           args: ${{ matrix.args }}
           # Do NOT set tagName / releaseName here — prevents tauri-action from
@@ -182,8 +208,6 @@ jobs:
           | Windows | x64 | `*_x64-setup.exe` |
           | Windows | ARM64 | `*_arm64-setup.exe` |
           | Linux | x86_64 | `*.deb` / `*.AppImage` |
-
-          > **macOS:** Not notarized — right-click → Open on first launch to bypass Gatekeeper.
 
           ## What's Changed
 

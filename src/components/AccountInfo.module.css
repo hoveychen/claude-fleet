@@ -1,6 +1,7 @@
 .container {
   border-top: 1px solid var(--color-border);
   flex-shrink: 0;
+  margin-top: auto;
 }
 
 .toggle {

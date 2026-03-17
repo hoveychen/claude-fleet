@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useDetailStore, useSessionsStore, useUIStore } from "../store";
 import type { SessionInfo } from "../types";
@@ -11,12 +11,28 @@ import styles from "./SessionList.module.css";
 import { ThemeToggle } from "./ThemeToggle";
 import { TokenSpeedChart } from "./TokenSpeedChart";
 
+const MIN_WIDTH = 200;
+const MAX_WIDTH = 520;
+const DEFAULT_WIDTH = 280;
+
+function getSavedWidth(): number {
+  const saved = localStorage.getItem("sidebar-width");
+  if (saved) {
+    const n = parseInt(saved, 10);
+    if (n >= MIN_WIDTH && n <= MAX_WIDTH) return n;
+  }
+  return DEFAULT_WIDTH;
+}
+
 export function SessionList() {
   const { t } = useTranslation();
   const { sessions, refresh, setSessions } = useSessionsStore();
   const { session: viewedSession, open } = useDetailStore();
   const { viewMode, setViewMode } = useUIStore();
   const [filter, setFilter] = useState("");
+  const [sidebarWidth, setSidebarWidth] = useState(getSavedWidth);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   useEffect(() => {
     refresh();
@@ -27,6 +43,33 @@ export function SessionList() {
       unlistenPromise.then((u) => u());
     };
   }, []);
+
+  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startWidth: sidebarWidth };
+    setIsDragging(true);
+
+    function onMouseMove(e: MouseEvent) {
+      if (!dragRef.current) return;
+      const delta = e.clientX - dragRef.current.startX;
+      const newWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, dragRef.current.startWidth + delta));
+      setSidebarWidth(newWidth);
+    }
+
+    function onMouseUp() {
+      dragRef.current = null;
+      setIsDragging(false);
+      setSidebarWidth((prev) => {
+        localStorage.setItem("sidebar-width", String(prev));
+        return prev;
+      });
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    }
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [sidebarWidth]);
 
   const filtered = sessions.filter((s) => {
     if (!filter) return true;
@@ -110,9 +153,10 @@ export function SessionList() {
 
   return (
     <>
-      <aside className={styles.sidebar}>
+      <aside className={styles.sidebar} style={{ width: sidebarWidth }}>
         {/* Header */}
         <div className={styles.header}>
+          <img src="/app-icon.png" className={styles.app_icon} alt="icon" />
           <h1 className={styles.title}>{t("title")}</h1>
           <span className={styles.count} title={`${activeCount} active`}>
             {sessions.length}
@@ -178,6 +222,12 @@ export function SessionList() {
         )}
 
         <AccountInfo />
+
+        {/* Resize handle */}
+        <div
+          className={`${styles.resize_handle} ${isDragging ? styles.resize_handle_active : ""}`}
+          onMouseDown={handleResizeMouseDown}
+        />
       </aside>
 
       {/* Gallery view rendered as sibling of sidebar, fills main area */}

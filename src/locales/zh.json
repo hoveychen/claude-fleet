@@ -30,6 +30,8 @@
   "language": "语言",
   "view_list": "列表",
   "view_gallery": "画廊",
+  "gallery_show_all": "全部显示",
+  "gallery_show_active": "仅活跃",
   "account": {
     "title": "账户",
     "plan": "套餐",

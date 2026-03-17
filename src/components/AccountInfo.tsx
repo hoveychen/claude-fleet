@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import styles from "./AccountInfo.module.css";
 
-const AUTO_REFRESH_INTERVAL_MS = 1 * 60 * 1000; // 1 minute
+const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 interface UsageStats {
   utilization: number; // 0–100
@@ -176,7 +176,7 @@ export function AccountInfo() {
                   checked={autoRefresh}
                   onChange={(e) => setAutoRefresh(e.target.checked)}
                 />
-                Auto (1m)
+                Auto (5m)
               </label>
               <button
                 className={styles.refresh}

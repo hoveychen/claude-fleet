@@ -83,6 +83,19 @@ fn read_keychain_credentials() -> Result<(String, String), String> {
     Ok((token, sub))
 }
 
+fn log_debug(msg: &str) {
+    if let Some(home) = dirs::home_dir() {
+        let log_path = home.join(".claude").join("claude-fleet-debug.log");
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let line = format!("[{timestamp}] {msg}\n");
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+    }
+}
+
 fn parse_usage(v: &Value) -> Option<UsageStats> {
     let utilization = v.get("utilization")?.as_f64()?;
     let resets_at = v.get("resets_at")?.as_str().unwrap_or("").to_string();
@@ -91,32 +104,76 @@ fn parse_usage(v: &Value) -> Option<UsageStats> {
 
 #[tauri::command]
 fn get_account_info() -> Result<AccountInfo, String> {
-    let (token, subscription_type) = read_keychain_credentials()?;
+    log_debug("get_account_info: start");
+
+    let (token, subscription_type) = read_keychain_credentials().map_err(|e| {
+        log_debug(&format!("get_account_info: keychain error: {e}"));
+        e
+    })?;
+    log_debug(&format!(
+        "get_account_info: credentials ok, subscription_type={subscription_type}"
+    ));
 
     let client = reqwest::blocking::Client::new();
     let auth_header = format!("Bearer {}", token);
     let beta = "oauth-2025-04-20";
 
-    let profile_resp = client
+    let profile_raw = client
         .get("https://api.anthropic.com/api/oauth/profile")
         .header("Authorization", &auth_header)
         .header("anthropic-beta", beta)
         .timeout(std::time::Duration::from_secs(10))
         .send()
-        .map_err(|e| format!("Profile request failed: {e}"))?
+        .map_err(|e| {
+            log_debug(&format!("get_account_info: profile request failed: {e}"));
+            format!("Profile request failed: {e}")
+        })?;
+    let profile_status = profile_raw.status();
+    let profile_body = profile_raw
         .json::<Value>()
-        .map_err(|e| format!("Profile parse failed: {e}"))?;
+        .map_err(|e| {
+            log_debug(&format!("get_account_info: profile parse failed: {e}"));
+            format!("Profile parse failed: {e}")
+        })?;
+    log_debug(&format!(
+        "get_account_info: profile status={profile_status}, body={}",
+        serde_json::to_string(&profile_body).unwrap_or_default()
+    ));
+    if !profile_status.is_success() {
+        let msg = format!("Profile API error {profile_status}: {profile_body}");
+        log_debug(&msg);
+        return Err(msg);
+    }
+    let profile_resp = profile_body;
 
-    let usage_resp = client
+    let usage_raw = client
         .get("https://api.anthropic.com/api/oauth/usage")
         .header("Authorization", &auth_header)
         .header("anthropic-beta", beta)
         .header("Content-Type", "application/json")
         .timeout(std::time::Duration::from_secs(10))
         .send()
-        .map_err(|e| format!("Usage request failed: {e}"))?
+        .map_err(|e| {
+            log_debug(&format!("get_account_info: usage request failed: {e}"));
+            format!("Usage request failed: {e}")
+        })?;
+    let usage_status = usage_raw.status();
+    let usage_body = usage_raw
         .json::<Value>()
-        .map_err(|e| format!("Usage parse failed: {e}"))?;
+        .map_err(|e| {
+            log_debug(&format!("get_account_info: usage parse failed: {e}"));
+            format!("Usage parse failed: {e}")
+        })?;
+    log_debug(&format!(
+        "get_account_info: usage status={usage_status}, body={}",
+        serde_json::to_string(&usage_body).unwrap_or_default()
+    ));
+    if !usage_status.is_success() {
+        let msg = format!("Usage API error {usage_status}: {usage_body}");
+        log_debug(&msg);
+        return Err(msg);
+    }
+    let usage_resp = usage_body;
 
     let email = profile_resp
         .pointer("/account/email")
@@ -155,6 +212,13 @@ fn get_account_info() -> Result<AccountInfo, String> {
     let seven_day_sonnet = usage_resp
         .get("seven_day_sonnet")
         .and_then(|v| parse_usage(v));
+
+    log_debug(&format!(
+        "get_account_info: ok, five_hour={}, seven_day={}, seven_day_sonnet={}",
+        five_hour.is_some(),
+        seven_day.is_some(),
+        seven_day_sonnet.is_some()
+    ));
 
     Ok(AccountInfo {
         email,
