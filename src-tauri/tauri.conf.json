@@ -48,7 +48,7 @@
     "linux": {
       "deb": {
         "files": {
-          "binaries/fleet-linux": "/usr/bin/fleet"
+          "/usr/bin/fleet": "binaries/fleet-linux"
         }
       }
     }

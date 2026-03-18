@@ -15,7 +15,6 @@ dist-ssr
 # Tauri build output
 src-tauri/target/
 src-tauri/binaries/
-src-tauri/nsis/
 
 # Editor directories and files
 .vscode/*
