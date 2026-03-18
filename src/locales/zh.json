@@ -66,7 +66,27 @@
     "refresh_now": "立即刷新",
     "updated_just_now": "刚刚更新",
     "updated_s_ago": "{{n}}秒前更新",
-    "updated": "{{n}}分钟前更新"
+    "updated": "{{n}}分钟前更新",
+    "cli_install_btn": "安装到 PATH",
+    "cli_install_hint": "将 fleet CLI 软链接到 /usr/local/bin/fleet（需要管理员密码）",
+    "cli_installing": "安装中…",
+    "cli_installed_btn": "已安装",
+    "cli_installed": "已安装到 {{path}}",
+    "ai_btn": "让 AI 使用 Fleet",
+    "ai_btn_hint": "教你的 AI 助手使用 Fleet CLI 监控 Claude Code 进程",
+    "ai_modal_title": "让 AI 使用 Claude Fleet",
+    "ai_modal_desc": "两个步骤，让你的 AI 助手（Claude Code、Cursor 等）通过 Fleet 监控和管理 Claude Code 进程。",
+    "ai_step1_title": "将 fleet 添加到 PATH",
+    "ai_step1_desc": "fleet CLI 必须在 PATH 中，AI 才能在终端中运行它。",
+    "ai_step1_other": "请从 releases 页面下载 fleet 二进制文件，并放置到 PATH 中（如 /usr/local/bin/）。",
+    "ai_step2_title": "为 AI 安装 Fleet Skill",
+    "ai_step2_desc": "将 skill 文件安装到所有已检测到的 AI 工具的 skills 目录，让它们了解如何使用 Fleet。",
+    "ai_no_tools": "未检测到兼容的 AI 工具（Claude Code、Cursor、GitHub Copilot、Gemini CLI）。",
+    "ai_skill_install_btn": "安装 Skill",
+    "ai_skill_installing": "安装中…",
+    "ai_skill_installed_btn": "已安装",
+    "ai_skill_save_btn": "保存 skill 文件…",
+    "ai_modal_close": "完成"
   },
   "chart": {
     "title": "Token 速度",
@@ -85,5 +105,101 @@
     "close": "关闭",
     "path": "路径"
   },
-  "stop_session": "停止会话（清除进程树）"
+  "stop_session": "停止会话（清除进程树）",
+  "onboarding": {
+    "welcome": "欢迎使用 Claude Fleet",
+    "subtitle": "在一处监控你所有的 Claude Code 会话",
+    "checking": "正在检查环境...",
+    "skip": "跳过",
+    "dismiss": "好的，开始使用",
+    "recheck": "重新检查",
+    "no_claude_at_all": {
+      "title": "未检测到 Claude Code",
+      "description": "Claude Fleet 用于监控 Claude Code 会话。未在本机发现 CLI、IDE 扩展或历史会话。",
+      "install_vscode": "安装 VS Code 扩展",
+      "install_vscode_hint": "在 VS Code 扩展市场搜索「Claude Code」，或从 Anthropic 官网安装。"
+    },
+    "cli_not_installed": {
+      "install_npm": "通过 npm 安装 CLI",
+      "install_npm_cmd": "npm install -g @anthropic-ai/claude-code",
+      "install_brew": "通过 Homebrew 安装 CLI（macOS）",
+      "install_brew_cmd": "brew install claude-code",
+      "after_install": "安装完成后，重启 Claude Fleet 或点击「重新检查」。"
+    },
+    "cli_not_in_path": {
+      "title": "CLI 未在 PATH 中（可选）",
+      "description": "Claude Code 已通过 IDE 扩展正常工作。未在 PATH 中找到独立 CLI，但这完全没有问题。",
+      "optional_hint": "安装独立 CLI 是可选的 —— 它可以让你在终端中使用 Claude Code，但不影响会话监控。"
+    },
+    "not_logged_in": {
+      "title": "尚未登录 Claude",
+      "description": "Claude Fleet 需要 Claude 凭据来显示账户信息和用量。选择你使用的工具查看登录指引。",
+      "api_key": "使用 API Key？",
+      "api_key_hint": "如果你使用 API Key 而非 OAuth，账户信息将不可用，但会话监控仍然正常工作。"
+    },
+    "login_tabs": {
+      "detected": "已检测",
+      "cli": {
+        "label": "CLI",
+        "hint": "在终端中运行以下命令进行身份验证：",
+        "browser": "这将打开浏览器窗口，使用你的 Anthropic 账户登录。"
+      },
+      "vscode": {
+        "label": "VS Code",
+        "step1": "1. 打开已安装 Claude Code 扩展的 VS Code。",
+        "step2": "2. 打开 Claude Code 侧边栏面板（或 Cmd+Shift+P > \"Claude Code: Open\"）。",
+        "step3": "3. 按照登录提示操作 —— 将打开浏览器进行身份验证。"
+      },
+      "jetbrains": {
+        "label": "JetBrains",
+        "step1": "1. 打开已安装 Claude Code 插件的 JetBrains IDE。",
+        "step2": "2. 打开 Claude Code 工具窗口，按照登录提示操作。"
+      },
+      "desktop": {
+        "label": "桌面端",
+        "step1": "1. 打开 Claude Desktop 应用。",
+        "step2": "2. 按照提示使用你的 Anthropic 账户登录。"
+      }
+    },
+    "credentials_invalid": {
+      "title": "凭据可能已过期",
+      "description": "找到了凭据但无法加载账户信息，令牌可能已过期。",
+      "relogin_cmd": "claude login",
+      "relogin_hint": "运行此命令刷新身份验证。",
+      "check_network": "如果你在代理或防火墙后面，请检查网络连接。",
+      "still_works": "即使凭据无效，会话监控仍然正常工作 —— 仅「账户和用量」面板受到影响。"
+    },
+    "waiting": {
+      "title": "等待第一个会话...",
+      "description": "一切就绪！在任何地方启动一个 Claude Code 会话，它将自动出现在这里。",
+      "hint_terminal": "终端：运行 \"claude\" 即可启动会话",
+      "hint_ide": "IDE：在 VS Code、JetBrains 或任何支持的编辑器中使用 Claude Code 扩展"
+    },
+    "celebration": {
+      "title": "首个会话已检测到！",
+      "description": "恭喜！Claude Fleet 已开始监控你的会话。尽情享受仪表盘吧！"
+    },
+    "all_good": {
+      "title": "一切就绪！",
+      "description": "Claude Code 已安装，你已登录，会话正在被监控。"
+    },
+    "copy_hint": "点击复制"
+  },
+  "wizard": {
+    "skip": "跳过",
+    "next": "下一步",
+    "done": "知道了",
+    "view_toggle": {
+      "title": "切换视图",
+      "desc": "在列表和画廊视图之间切换。列表视图在侧边栏显示会话详情，画廊视图以卡片网格展示所有会话。"
+    },
+    "token_speed": {
+      "title": "Token 速度",
+      "desc": "实时图表，展示所有活跃会话的综合 Token 输出速度，帮助你一目了然地监控整体吞吐量。"
+    },
+    "account_info": {
+      "title": "账户 & 用量",
+      "desc": "在这里查看账户详情和速率限制用量。追踪 5 小时会话限额、每周配额和 Sonnet 用量，并提供趋势对比。"
+    }
+  }
 }

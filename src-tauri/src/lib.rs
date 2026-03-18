@@ -1,6 +1,8 @@
-mod session;
+pub mod account;
+pub mod session;
 mod watcher;
 
+use std::fs;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -9,202 +11,9 @@ use tauri::Manager;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 
+use account::{AccountInfo, read_keychain_credentials};
 use session::SessionInfo;
 use watcher::WatcherState;
-
-// ── Account / Usage types ─────────────────────────────────────────────────────
-
-#[derive(Serialize, Deserialize, Clone, Default)]
-pub struct UsageStats {
-    pub utilization: f64,
-    pub resets_at: String,
-    pub prev_utilization: Option<f64>,
-}
-
-// ── Usage snapshot history ────────────────────────────────────────────────────
-
-#[derive(Serialize, Deserialize, Clone, Default)]
-struct MetricSnap {
-    utilization: f64,
-    resets_at: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Default)]
-struct SnapshotEntry {
-    ts: i64, // unix timestamp in ms
-    five_hour: Option<MetricSnap>,
-    seven_day: Option<MetricSnap>,
-    seven_day_sonnet: Option<MetricSnap>,
-}
-
-fn snapshot_path() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join("claude-fleet-usage-history.json"))
-}
-
-fn load_snapshots() -> Vec<SnapshotEntry> {
-    let path = match snapshot_path() {
-        Some(p) => p,
-        None => return vec![],
-    };
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
-fn save_snapshots(entries: &[SnapshotEntry]) {
-    if let Some(path) = snapshot_path() {
-        if let Ok(json) = serde_json::to_string(entries) {
-            let _ = std::fs::write(path, json);
-        }
-    }
-}
-
-fn period_ms(metric: &str) -> i64 {
-    match metric {
-        "five_hour" => 5 * 3600 * 1000,
-        _ => 7 * 24 * 3600 * 1000,
-    }
-}
-
-fn parse_ts_ms(rfc3339: &str) -> Option<i64> {
-    chrono::DateTime::parse_from_rfc3339(rfc3339)
-        .ok()
-        .map(|dt| dt.timestamp_millis())
-}
-
-fn get_metric_snap<'a>(entry: &'a SnapshotEntry, metric: &str) -> Option<&'a MetricSnap> {
-    match metric {
-        "five_hour" => entry.five_hour.as_ref(),
-        "seven_day" => entry.seven_day.as_ref(),
-        "seven_day_sonnet" => entry.seven_day_sonnet.as_ref(),
-        _ => None,
-    }
-}
-
-/// Find what utilization the previous period had at the same relative elapsed fraction.
-fn find_prev_utilization(
-    history: &[SnapshotEntry],
-    metric: &str,
-    current_resets_at: &str,
-    now_ms: i64,
-) -> Option<f64> {
-    let current_reset_ms = parse_ts_ms(current_resets_at)?;
-    let pms = period_ms(metric);
-    let current_start_ms = current_reset_ms - pms;
-    let current_frac =
-        ((now_ms - current_start_ms) as f64 / pms as f64).clamp(0.0, 1.0);
-
-    // Collect distinct resets_at values from earlier periods
-    let mut prev_resets: Vec<String> = history
-        .iter()
-        .filter_map(|e| get_metric_snap(e, metric))
-        .filter(|m| m.resets_at != current_resets_at)
-        .filter(|m| {
-            parse_ts_ms(&m.resets_at)
-                .map(|t| t < current_reset_ms)
-                .unwrap_or(false)
-        })
-        .map(|m| m.resets_at.clone())
-        .collect();
-    prev_resets.sort();
-    prev_resets.dedup();
-
-    let prev_resets_at = prev_resets.last()?;
-    let prev_reset_ms = parse_ts_ms(prev_resets_at)?;
-    let prev_start_ms = prev_reset_ms - pms;
-
-    // Among snapshots in that previous period, pick the one closest in elapsed fraction
-    history
-        .iter()
-        .filter_map(|e| {
-            let snap = get_metric_snap(e, metric)?;
-            if &snap.resets_at != prev_resets_at {
-                return None;
-            }
-            let frac = ((e.ts - prev_start_ms) as f64 / pms as f64).clamp(0.0, 1.0);
-            Some((frac, snap.utilization))
-        })
-        .min_by(|(f1, _), (f2, _)| {
-            (f1 - current_frac)
-                .abs()
-                .partial_cmp(&(f2 - current_frac).abs())
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .map(|(_, u)| u)
-}
-
-#[derive(Serialize, Deserialize, Clone, Default)]
-pub struct AccountInfo {
-    pub email: String,
-    pub full_name: String,
-    pub organization_name: String,
-    pub plan: String,
-    pub auth_method: String,
-    pub five_hour: Option<UsageStats>,
-    pub seven_day: Option<UsageStats>,
-    pub seven_day_sonnet: Option<UsageStats>,
-}
-
-#[cfg(target_os = "macos")]
-fn read_keychain_credentials() -> Result<(String, String), String> {
-    // Try keychain first (older Claude Code versions)
-    let out = std::process::Command::new("security")
-        .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
-        .output()
-        .map_err(|e| format!("security command failed: {e}"))?;
-
-    let raw = if out.status.success() {
-        String::from_utf8(out.stdout).map_err(|e| e.to_string())?
-    } else {
-        // Fallback to credentials file (newer Claude Code versions)
-        let cred_path = dirs::home_dir()
-            .ok_or("No home dir")?
-            .join(".claude")
-            .join(".credentials.json");
-        std::fs::read_to_string(&cred_path)
-            .map_err(|_| "Credentials not found in keychain or file".to_string())?
-    };
-
-    let json: Value = serde_json::from_str(raw.trim()).map_err(|e| e.to_string())?;
-
-    let oauth = json.get("claudeAiOauth").ok_or("No claudeAiOauth key")?;
-    let token = oauth
-        .get("accessToken")
-        .and_then(|v| v.as_str())
-        .ok_or("No accessToken")?
-        .to_string();
-    let sub = oauth
-        .get("subscriptionType")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
-
-    Ok((token, sub))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn read_keychain_credentials() -> Result<(String, String), String> {
-    let cred_path = dirs::home_dir()
-        .ok_or("No home dir")?
-        .join(".claude")
-        .join(".credentials.json");
-    let raw = std::fs::read_to_string(&cred_path)
-        .map_err(|e| format!("{e} (tried: {})", cred_path.display()))?;
-    let json: Value = serde_json::from_str(raw.trim()).map_err(|e| e.to_string())?;
-    let oauth = json.get("claudeAiOauth").ok_or("No claudeAiOauth key")?;
-    let token = oauth
-        .get("accessToken")
-        .and_then(|v| v.as_str())
-        .ok_or("No accessToken")?
-        .to_string();
-    let sub = oauth
-        .get("subscriptionType")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
-    Ok((token, sub))
-}
 
 #[tauri::command]
 fn get_log_path() -> String {
@@ -231,176 +40,171 @@ fn log_debug(msg: &str) {
     }
 }
 
-fn parse_usage(v: &Value) -> Option<UsageStats> {
-    let utilization = v.get("utilization")?.as_f64()?;
-    let resets_at = v.get("resets_at")?.as_str().unwrap_or("").to_string();
-    Some(UsageStats { utilization, resets_at, prev_utilization: None })
+// ── Setup status check ───────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DetectedTools {
+    pub cli: bool,
+    pub vscode: bool,
+    pub jetbrains: bool,
+    pub desktop: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SetupStatus {
+    pub cli_installed: bool,
+    pub cli_path: Option<String>,
+    pub claude_dir_exists: bool,
+    pub detected_tools: DetectedTools,
+    pub logged_in: bool,
+    pub has_sessions: bool,
+    pub credentials_valid: Option<bool>,
+}
+
+#[tauri::command]
+fn check_setup_status(state: tauri::State<AppState>) -> SetupStatus {
+    let (cli_installed, cli_path) = check_cli_installed();
+
+    let claude_dir_exists = dirs::home_dir()
+        .map(|h| h.join(".claude").is_dir())
+        .unwrap_or(false);
+
+    let detected_tools = detect_installed_tools(&state);
+    let logged_in = read_keychain_credentials().is_ok();
+
+    // Check if any sessions exist: try in-memory cache first (fast), then
+    // fall back to a quick filesystem scan to avoid a race with the background
+    // watcher thread that may not have finished its first pass yet.
+    let has_sessions = if !state.sessions.lock().unwrap().is_empty() {
+        true
+    } else {
+        session::get_claude_dir().map_or(false, |claude_dir| {
+            let projects_dir = claude_dir.join("projects");
+            fs::read_dir(&projects_dir).map_or(false, |entries| {
+                entries.filter_map(|e| e.ok()).any(|workspace_entry| {
+                    let workspace_dir = workspace_entry.path();
+                    workspace_dir.is_dir()
+                        && fs::read_dir(&workspace_dir).map_or(false, |files| {
+                            files.filter_map(|e| e.ok()).any(|f| {
+                                f.path().extension().and_then(|x| x.to_str()) == Some("jsonl")
+                            })
+                        })
+                })
+            })
+        })
+    };
+
+    SetupStatus {
+        cli_installed,
+        cli_path,
+        claude_dir_exists,
+        detected_tools,
+        logged_in,
+        has_sessions,
+        credentials_valid: None,
+    }
+}
+
+fn detect_installed_tools(state: &tauri::State<AppState>) -> DetectedTools {
+    let home = dirs::home_dir();
+
+    // CLI: already checked via PATH / common paths
+    let (cli, _) = check_cli_installed();
+
+    // VS Code extension: check ~/.vscode/extensions/ and ~/.vscode-insiders/extensions/
+    let vscode = home.as_ref().map_or(false, |h| {
+        let ext_dirs = [
+            h.join(".vscode").join("extensions"),
+            h.join(".vscode-insiders").join("extensions"),
+            h.join(".cursor").join("extensions"),
+        ];
+        ext_dirs.iter().any(|dir| {
+            dir.is_dir() && fs::read_dir(dir).map_or(false, |entries| {
+                entries.filter_map(|e| e.ok()).any(|e| {
+                    e.file_name().to_string_lossy().starts_with("anthropic.claude-code")
+                })
+            })
+        })
+    }) || {
+        // Also check live IDE sessions for VS Code-like IDE names
+        let sessions = state.sessions.lock().unwrap();
+        sessions.iter().any(|s| {
+            s.ide_name.as_deref().map_or(false, |name| {
+                let n = name.to_lowercase();
+                n.contains("vscode") || n.contains("vs code") || n.contains("cursor")
+            })
+        })
+    };
+
+    // JetBrains: check live sessions for JetBrains IDE names
+    let jetbrains = {
+        let sessions = state.sessions.lock().unwrap();
+        sessions.iter().any(|s| {
+            s.ide_name.as_deref().map_or(false, |name| {
+                let n = name.to_lowercase();
+                n.contains("intellij") || n.contains("webstorm") || n.contains("pycharm")
+                    || n.contains("goland") || n.contains("rustrover") || n.contains("phpstorm")
+                    || n.contains("rider") || n.contains("clion") || n.contains("jetbrains")
+            })
+        })
+    };
+
+    // Claude Desktop app
+    let desktop = {
+        #[cfg(target_os = "macos")]
+        { std::path::Path::new("/Applications/Claude.app").exists() }
+        #[cfg(target_os = "windows")]
+        {
+            std::env::var("LOCALAPPDATA").map_or(false, |appdata| {
+                std::path::Path::new(&appdata).join("Programs").join("Claude").join("Claude.exe").exists()
+            })
+        }
+        #[cfg(target_os = "linux")]
+        { false }
+    };
+
+    DetectedTools { cli, vscode, jetbrains, desktop }
+}
+
+fn check_cli_installed() -> (bool, Option<String>) {
+    // Try `which claude` (unix) or `where claude` (windows)
+    #[cfg(unix)]
+    let cmd = "which";
+    #[cfg(not(unix))]
+    let cmd = "where";
+
+    if let Ok(output) = std::process::Command::new(cmd).arg("claude").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            return (true, Some(path));
+        }
+    }
+
+    // Also check common install locations
+    let common_paths = [
+        dirs::home_dir().map(|h| h.join(".npm-global").join("bin").join("claude")),
+        dirs::home_dir().map(|h| h.join(".local").join("bin").join("claude")),
+        Some(std::path::PathBuf::from("/usr/local/bin/claude")),
+        Some(std::path::PathBuf::from("/opt/homebrew/bin/claude")),
+    ];
+
+    for path_opt in &common_paths {
+        if let Some(path) = path_opt {
+            if path.exists() {
+                return (true, Some(path.to_string_lossy().to_string()));
+            }
+        }
+    }
+
+    (false, None)
 }
 
 #[tauri::command]
 fn get_account_info() -> Result<AccountInfo, String> {
     log_debug("get_account_info: start");
-
-    let (token, subscription_type) = read_keychain_credentials().map_err(|e| {
-        log_debug(&format!("get_account_info: keychain error: {e}"));
+    account::fetch_account_info().map_err(|e| {
+        log_debug(&format!("get_account_info: error: {e}"));
         e
-    })?;
-    log_debug(&format!(
-        "get_account_info: credentials ok, subscription_type={subscription_type}"
-    ));
-
-    let client = reqwest::blocking::Client::new();
-    let auth_header = format!("Bearer {}", token);
-    let beta = "oauth-2025-04-20";
-
-    let profile_raw = client
-        .get("https://api.anthropic.com/api/oauth/profile")
-        .header("Authorization", &auth_header)
-        .header("anthropic-beta", beta)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .map_err(|e| {
-            log_debug(&format!("get_account_info: profile request failed: {e}"));
-            format!("Profile request failed: {e}")
-        })?;
-    let profile_status = profile_raw.status();
-    let profile_body = profile_raw
-        .json::<Value>()
-        .map_err(|e| {
-            log_debug(&format!("get_account_info: profile parse failed: {e}"));
-            format!("Profile parse failed: {e}")
-        })?;
-    log_debug(&format!(
-        "get_account_info: profile status={profile_status}, body={}",
-        serde_json::to_string(&profile_body).unwrap_or_default()
-    ));
-    if !profile_status.is_success() {
-        let msg = format!("Profile API error {profile_status}: {profile_body}");
-        log_debug(&msg);
-        return Err(msg);
-    }
-    let profile_resp = profile_body;
-
-    let usage_raw = client
-        .get("https://api.anthropic.com/api/oauth/usage")
-        .header("Authorization", &auth_header)
-        .header("anthropic-beta", beta)
-        .header("Content-Type", "application/json")
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .map_err(|e| {
-            log_debug(&format!("get_account_info: usage request failed: {e}"));
-            format!("Usage request failed: {e}")
-        })?;
-    let usage_status = usage_raw.status();
-    let usage_body = usage_raw
-        .json::<Value>()
-        .map_err(|e| {
-            log_debug(&format!("get_account_info: usage parse failed: {e}"));
-            format!("Usage parse failed: {e}")
-        })?;
-    log_debug(&format!(
-        "get_account_info: usage status={usage_status}, body={}",
-        serde_json::to_string(&usage_body).unwrap_or_default()
-    ));
-    if !usage_status.is_success() {
-        let msg = format!("Usage API error {usage_status}: {usage_body}");
-        log_debug(&msg);
-        return Err(msg);
-    }
-    let usage_resp = usage_body;
-
-    let email = profile_resp
-        .pointer("/account/email")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let full_name = profile_resp
-        .pointer("/account/full_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let org_name = profile_resp
-        .pointer("/organization/name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let has_max = profile_resp
-        .pointer("/account/has_claude_max")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let has_pro = profile_resp
-        .pointer("/account/has_claude_pro")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let plan = if has_max {
-        "Claude Max".to_string()
-    } else if has_pro || subscription_type == "pro" {
-        "Claude Pro".to_string()
-    } else {
-        "API / Free".to_string()
-    };
-
-    let mut five_hour = usage_resp.get("five_hour").and_then(|v| parse_usage(v));
-    let mut seven_day = usage_resp.get("seven_day").and_then(|v| parse_usage(v));
-    let mut seven_day_sonnet = usage_resp
-        .get("seven_day_sonnet")
-        .and_then(|v| parse_usage(v));
-
-    log_debug(&format!(
-        "get_account_info: ok, five_hour={}, seven_day={}, seven_day_sonnet={}",
-        five_hour.is_some(),
-        seven_day.is_some(),
-        seven_day_sonnet.is_some()
-    ));
-
-    // ── Persist snapshot and compute previous-period utilization ─────────────
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    let mut history = load_snapshots();
-    history.push(SnapshotEntry {
-        ts: now_ms,
-        five_hour: five_hour.as_ref().map(|s| MetricSnap {
-            utilization: s.utilization,
-            resets_at: s.resets_at.clone(),
-        }),
-        seven_day: seven_day.as_ref().map(|s| MetricSnap {
-            utilization: s.utilization,
-            resets_at: s.resets_at.clone(),
-        }),
-        seven_day_sonnet: seven_day_sonnet.as_ref().map(|s| MetricSnap {
-            utilization: s.utilization,
-            resets_at: s.resets_at.clone(),
-        }),
-    });
-    if history.len() > 200 {
-        let drain = history.len() - 200;
-        history.drain(0..drain);
-    }
-    save_snapshots(&history);
-
-    if let Some(ref mut s) = five_hour {
-        let ra = s.resets_at.clone();
-        s.prev_utilization = find_prev_utilization(&history, "five_hour", &ra, now_ms);
-    }
-    if let Some(ref mut s) = seven_day {
-        let ra = s.resets_at.clone();
-        s.prev_utilization = find_prev_utilization(&history, "seven_day", &ra, now_ms);
-    }
-    if let Some(ref mut s) = seven_day_sonnet {
-        let ra = s.resets_at.clone();
-        s.prev_utilization = find_prev_utilization(&history, "seven_day_sonnet", &ra, now_ms);
-    }
-
-    Ok(AccountInfo {
-        email,
-        full_name,
-        organization_name: org_name,
-        plan,
-        auth_method: "claudeai".to_string(),
-        five_hour,
-        seven_day,
-        seven_day_sonnet,
     })
 }
 
@@ -530,6 +334,158 @@ fn stop_watching_session(state: tauri::State<AppState>) {
     *state.viewed_offset.lock().unwrap() = 0;
 }
 
+// ── CLI installer (macOS only) ───────────────────────────────────────────────
+
+/// Create a symlink at /usr/local/bin/fleet pointing to the bundled fleet binary.
+/// Requires the user to approve via osascript (admin password prompt).
+#[tauri::command]
+fn install_fleet_cli(app: tauri::AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        // Tauri places externalBin sidecars next to the main executable
+        let exe_dir = std::env::current_exe()
+            .map_err(|e| e.to_string())?
+            .parent()
+            .ok_or("no parent dir")?
+            .to_path_buf();
+        let fleet_bin = exe_dir.join("fleet");
+        if !fleet_bin.exists() {
+            return Err(format!("fleet binary not found at {}", fleet_bin.display()));
+        }
+
+        let target = "/usr/local/bin/fleet";
+        let src = fleet_bin.to_string_lossy().to_string();
+
+        // Use osascript to run with admin privileges
+        let script = format!(
+            r#"do shell script "mkdir -p /usr/local/bin && ln -sf '{}' '{}'" with administrator privileges"#,
+            src, target
+        );
+        let status = std::process::Command::new("osascript")
+            .args(["-e", &script])
+            .status()
+            .map_err(|e| e.to_string())?;
+
+        if status.success() {
+            Ok(target.to_string())
+        } else {
+            Err("Installation cancelled or failed".to_string())
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("install_fleet_cli is only supported on macOS".to_string())
+    }
+}
+
+// ── Skill installer ──────────────────────────────────────────────────────────
+
+const FLEET_SKILL_MD: &str = include_str!("../../skills/fleet/SKILL.md");
+
+/// Tools we know support the Agent Skills standard, keyed by their home dir name.
+const SKILL_TARGETS: &[(&str, &str)] = &[
+    ("Claude Code", ".claude"),
+    ("GitHub Copilot", ".copilot"),
+    ("Cursor", ".cursor"),
+    ("Gemini CLI", ".gemini"),
+];
+
+#[derive(Serialize, Clone)]
+struct DetectedTool {
+    name: String,
+    skill_path: String,
+}
+
+#[derive(Serialize)]
+struct SkillInstallResult {
+    installed: Vec<DetectedTool>,
+    errors: Vec<String>,
+}
+
+fn home_dir() -> Result<std::path::PathBuf, String> {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+        .map_err(|_| "Cannot determine home directory".to_string())
+}
+
+/// Detect which AI tools are installed (by checking their home directories).
+#[tauri::command]
+fn detect_ai_tools() -> Result<Vec<DetectedTool>, String> {
+    let home = home_dir()?;
+    let detected = SKILL_TARGETS
+        .iter()
+        .filter(|(_, dir)| home.join(dir).exists())
+        .map(|(name, dir)| DetectedTool {
+            name: name.to_string(),
+            skill_path: home
+                .join(dir)
+                .join("skills")
+                .join("fleet")
+                .join("SKILL.md")
+                .to_string_lossy()
+                .to_string(),
+        })
+        .collect();
+    Ok(detected)
+}
+
+/// Open a native save dialog and write SKILL.md to the chosen path.
+#[tauri::command]
+async fn save_skill_file() -> Result<String, String> {
+    let handle = rfd::AsyncFileDialog::new()
+        .set_file_name("SKILL.md")
+        .set_title("Save Fleet Skill")
+        .save_file()
+        .await;
+
+    match handle {
+        Some(file) => {
+            file.write(FLEET_SKILL_MD.as_bytes())
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(file.path().to_string_lossy().to_string())
+        }
+        None => Err("cancelled".to_string()),
+    }
+}
+
+/// Install the fleet skill to all detected AI tool directories.
+#[tauri::command]
+fn install_fleet_skill() -> Result<SkillInstallResult, String> {
+    let home = home_dir()?;
+    let mut installed = vec![];
+    let mut errors = vec![];
+
+    for (name, dir) in SKILL_TARGETS {
+        let tool_home = home.join(dir);
+        if !tool_home.exists() {
+            continue;
+        }
+        let skill_dir = tool_home.join("skills").join("fleet");
+        let skill_path = skill_dir.join("SKILL.md");
+        match std::fs::create_dir_all(&skill_dir)
+            .and_then(|_| std::fs::write(&skill_path, FLEET_SKILL_MD))
+        {
+            Ok(_) => installed.push(DetectedTool {
+                name: name.to_string(),
+                skill_path: skill_path.to_string_lossy().to_string(),
+            }),
+            Err(e) => errors.push(format!("{}: {}", name, e)),
+        }
+    }
+
+    if installed.is_empty() && errors.is_empty() {
+        errors.push(
+            "No supported AI tools detected. Install Claude Code, Cursor, GitHub Copilot, or Gemini CLI first.".to_string(),
+        );
+    }
+
+    Ok(SkillInstallResult { installed, errors })
+}
+
 // ── Tray helpers ─────────────────────────────────────────────────────────────
 
 pub fn update_tray(app: &tauri::AppHandle, sessions: &[SessionInfo]) {
@@ -650,6 +606,11 @@ pub fn run() {
             get_log_path,
             get_platform,
             kill_session,
+            check_setup_status,
+            install_fleet_cli,
+            detect_ai_tools,
+            install_fleet_skill,
+            save_skill_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

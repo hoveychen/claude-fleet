@@ -24,8 +24,8 @@ export function resolveTheme(theme: Theme): "dark" | "light" {
 }
 
 export const useUIStore = create<UIState>((set) => ({
-  theme: (localStorage.getItem("theme") as Theme) ?? "dark",
-  viewMode: (localStorage.getItem("viewMode") as ViewMode) ?? "list",
+  theme: (localStorage.getItem("theme") as Theme) ?? "system",
+  viewMode: (localStorage.getItem("viewMode") as ViewMode) ?? "gallery",
   setTheme: (t) => {
     localStorage.setItem("theme", t);
     set({ theme: t });

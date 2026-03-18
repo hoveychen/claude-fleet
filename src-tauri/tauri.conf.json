@@ -33,11 +33,24 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "externalBin": ["binaries/fleet"],
     "macOS": {
       "minimumSystemVersion": "10.15",
       "entitlements": null,
       "exceptionDomain": null,
       "frameworks": []
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "nsis/installer-hooks.nsi"
+      }
+    },
+    "linux": {
+      "deb": {
+        "files": {
+          "binaries/fleet-linux": "/usr/bin/fleet"
+        }
+      }
     }
   }
 }

@@ -97,7 +97,9 @@ export function SessionList() {
       .map((s) => s.parentSessionId!)
   );
   const promoted = filtered.map((s) =>
-    !s.isSubagent && s.status === "idle" && activeSubagentParentIds.has(s.id)
+    !s.isSubagent &&
+    ["idle", "active", "waitingInput", "processing"].includes(s.status) &&
+    activeSubagentParentIds.has(s.id)
       ? { ...s, status: "delegating" as const }
       : s
   );
@@ -172,7 +174,7 @@ export function SessionList() {
         <div className={styles.controls}>
           <ThemeToggle />
           <LanguageSwitcher />
-          <div className={styles.view_toggle}>
+          <div className={styles.view_toggle} data-wizard="view-toggle">
             <button
               className={`${styles.view_btn} ${viewMode === "list" ? styles.view_active : ""}`}
               onClick={() => setViewMode("list")}
@@ -191,7 +193,9 @@ export function SessionList() {
         </div>
 
         {/* Token Speed Chart */}
-        <TokenSpeedChart />
+        <div data-wizard="token-speed">
+          <TokenSpeedChart />
+        </div>
 
         {/* Search + Session list — hidden in gallery mode */}
         {viewMode === "list" && (
@@ -226,7 +230,9 @@ export function SessionList() {
           </>
         )}
 
-        <AccountInfo />
+        <div data-wizard="account-info" style={{ marginTop: "auto" }}>
+          <AccountInfo />
+        </div>
 
         {/* Resize handle */}
         <div

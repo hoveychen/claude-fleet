@@ -1,0 +1,97 @@
+/* ── Wizard overlay ────────────────────────────────────────────────────────── */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+/* ── Spotlight cutout ─────────────────────────────────────────────────────── */
+.spotlight {
+  position: fixed;
+  border-radius: 8px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+  z-index: 901;
+  pointer-events: none;
+  transition: all 0.3s ease;
+  background: transparent;
+}
+
+/* ── Tooltip ──────────────────────────────────────────────────────────────── */
+.tooltip {
+  position: fixed;
+  z-index: 902;
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 16px;
+  max-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+  animation: wizardFadeIn 0.2s ease;
+}
+
+@keyframes wizardFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.tooltip_title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.tooltip_desc {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+.tooltip_footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.step_indicator {
+  font-size: 11px;
+  color: var(--color-text-dim);
+}
+
+.tooltip_actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn_skip {
+  background: none;
+  border: none;
+  color: var(--color-text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.btn_skip:hover {
+  color: var(--color-text-secondary);
+}
+
+.btn_next {
+  background: var(--color-accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.btn_next:hover {
+  opacity: 0.9;
+}

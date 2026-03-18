@@ -21,31 +21,37 @@ jobs:
             runner: macos-latest
             rust_target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
+            fleet_bin: fleet-cli
 
           - name: macOS (Intel)
             runner: macos-latest
             rust_target: x86_64-apple-darwin
             args: --target x86_64-apple-darwin
+            fleet_bin: fleet-cli
 
           - name: Windows (x64)
             runner: windows-latest
             rust_target: x86_64-pc-windows-msvc
             args: --target x86_64-pc-windows-msvc
+            fleet_bin: fleet-cli.exe
 
           - name: Windows (ARM64)
             runner: windows-latest
             rust_target: aarch64-pc-windows-msvc
             args: --target aarch64-pc-windows-msvc
+            fleet_bin: fleet-cli.exe
 
           - name: Linux (x86_64)
             runner: ubuntu-22.04
             rust_target: x86_64-unknown-linux-gnu
             args: --target x86_64-unknown-linux-gnu
+            fleet_bin: fleet-cli
 
           - name: Linux (ARM64)
             runner: ubuntu-22.04-arm
             rust_target: aarch64-unknown-linux-gnu
             args: --target aarch64-unknown-linux-gnu
+            fleet_bin: fleet-cli
 
     runs-on: ${{ matrix.runner }}
 
@@ -83,6 +89,36 @@ jobs:
             libayatana-appindicator3-dev \
             xdg-utils
 
+      # ── Pre-build fleet CLI sidecar ─────────────────────────────────────────
+      # Must run before tauri-action so the real binary exists in binaries/ and
+      # overwrites the build.rs placeholder. tauri-action then signs + bundles it.
+      - name: Build fleet CLI sidecar
+        shell: bash
+        run: |
+          # Build the CLI binary (named fleet-cli to avoid collision with tauri externalBin "fleet")
+          cargo build --release --bin fleet-cli \
+            --manifest-path src-tauri/Cargo.toml \
+            --target ${{ matrix.rust_target }}
+          mkdir -p src-tauri/binaries
+
+          EXT=""
+          if [ "$RUNNER_OS" = "Windows" ]; then EXT=".exe"; fi
+
+          # Copy as fleet-{triple} — tauri externalBin strips the triple and bundles it as "fleet"
+          cp "src-tauri/target/${{ matrix.rust_target }}/release/${{ matrix.fleet_bin }}" \
+             "src-tauri/binaries/fleet-${{ matrix.rust_target }}${EXT}"
+
+          # Linux: deb.files needs a generic "fleet-linux" name (same binary, generic path)
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            cp "src-tauri/target/${{ matrix.rust_target }}/release/fleet-cli" \
+               "src-tauri/binaries/fleet-linux"
+            chmod +x "src-tauri/binaries/fleet-linux"
+          fi
+
+          if [ "$RUNNER_OS" != "Windows" ]; then
+            chmod +x "src-tauri/binaries/fleet-${{ matrix.rust_target }}"
+          fi
+
       # Sign on macOS — APPLE_ID/PASSWORD/TEAM_ID intentionally omitted
       # so Tauri skips notarization (handled by notarize.yml)
       - name: Import macOS signing certificate
@@ -119,31 +155,46 @@ jobs:
           args: ${{ matrix.args }}
           includeUpdaterJson: false
 
-      - name: Collect artifacts (macOS DMG)
+      # ── Collect artifacts ───────────────────────────────────────────────────
+
+      - name: Collect artifacts (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
           mkdir -p dist-artifacts
+          # App bundle (DMG) — fleet is embedded inside via externalBin
           find src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg \
             -name "*.dmg" -exec cp {} dist-artifacts/ \;
+          # Standalone fleet binary (for users who want it without the app)
+          cp src-tauri/target/${{ matrix.rust_target }}/release/fleet-cli \
+             dist-artifacts/fleet-${{ matrix.rust_target }}
 
-      - name: Collect artifacts (Windows NSIS)
+      - name: Collect artifacts (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           mkdir -p dist-artifacts
+          # App installer (NSIS) — fleet.exe is embedded inside via externalBin
           find src-tauri/target/${{ matrix.rust_target }}/release/bundle/nsis \
             -name "*.exe" -exec cp {} dist-artifacts/ \;
+          # Standalone fleet binary
+          cp src-tauri/target/${{ matrix.rust_target }}/release/fleet-cli.exe \
+             dist-artifacts/fleet-${{ matrix.rust_target }}.exe
 
       - name: Collect artifacts (Linux)
         if: runner.os == 'Linux'
         shell: bash
         run: |
           mkdir -p dist-artifacts
+          # .deb — fleet is at /usr/bin/fleet via deb.files
           find src-tauri/target/${{ matrix.rust_target }}/release/bundle/deb \
             -name "*.deb" -exec cp {} dist-artifacts/ \; 2>/dev/null || true
+          # AppImage — fleet is bundled inside via externalBin
           find src-tauri/target/${{ matrix.rust_target }}/release/bundle/appimage \
             -name "*.AppImage" -exec cp {} dist-artifacts/ \; 2>/dev/null || true
+          # Standalone fleet binary
+          cp src-tauri/target/${{ matrix.rust_target }}/release/fleet-cli \
+             dist-artifacts/fleet-${{ matrix.rust_target }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -152,7 +203,7 @@ jobs:
           path: dist-artifacts/
           if-no-files-found: error
 
-  # ── Publish release with all artifacts (macOS signed but not yet notarized) ─
+  # ── Publish release with all artifacts ─────────────────────────────────────
   publish:
     name: Publish Release
     needs: build
@@ -183,6 +234,8 @@ jobs:
           cat >> release_notes.md << 'EOF'
           ## Downloads
 
+          ### App Installers
+
           | Platform | Architecture | File |
           |---|---|---|
           | macOS | Apple Silicon (M1/M2/M3/M4) | `*_aarch64.dmg` |
@@ -191,6 +244,40 @@ jobs:
           | Windows | ARM64 | `*_arm64-setup.exe` |
           | Linux | x86_64 | `*.deb` / `*.AppImage` |
           | Linux | ARM64 | `*.deb` / `*.AppImage` |
+
+          ### `fleet` CLI (standalone binaries)
+
+          | Platform | Architecture | File |
+          |---|---|---|
+          | macOS | Apple Silicon | `fleet-aarch64-apple-darwin` |
+          | macOS | Intel | `fleet-x86_64-apple-darwin` |
+          | Windows | x64 | `fleet-x86_64-pc-windows-msvc.exe` |
+          | Windows | ARM64 | `fleet-aarch64-pc-windows-msvc.exe` |
+          | Linux | x86_64 | `fleet-x86_64-unknown-linux-gnu` |
+          | Linux | ARM64 | `fleet-aarch64-unknown-linux-gnu` |
+
+          ## Installing the `fleet` CLI
+
+          The `fleet` CLI is bundled inside the app installer and also available as a standalone binary.
+
+          **macOS** — after installing the app:
+          ```sh
+          sudo ln -sf "/Applications/Claude Fleet.app/Contents/MacOS/fleet" /usr/local/bin/fleet
+          ```
+
+          **Linux** — the `.deb` package installs `fleet` to `/usr/bin/fleet` automatically.
+          For AppImage users, download the standalone binary and place it in your `$PATH`:
+          ```sh
+          chmod +x fleet-*-linux-* && sudo mv fleet-*-linux-* /usr/local/bin/fleet
+          ```
+
+          **Windows** — `fleet.exe` is installed to the app directory. Add it to `PATH`:
+          ```powershell
+          # In PowerShell (adjust path if installed per-machine)
+          $dir = "$env:LOCALAPPDATA\Programs\Claude Fleet"
+          [Environment]::SetEnvironmentVariable("PATH", "$env:PATH;$dir", "User")
+          ```
+          Or download the standalone binary and place it wherever you prefer.
 
           ## What's Changed
 

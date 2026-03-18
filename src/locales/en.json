@@ -66,7 +66,27 @@
     "refresh_now": "Refresh now",
     "updated_just_now": "Updated just now",
     "updated_s_ago": "Updated {{n}}s ago",
-    "updated": "Updated {{n}}m ago"
+    "updated": "Updated {{n}}m ago",
+    "cli_install_btn": "Install to PATH",
+    "cli_install_hint": "Symlink the fleet CLI to /usr/local/bin/fleet (requires admin password)",
+    "cli_installing": "Installing…",
+    "cli_installed_btn": "CLI Installed",
+    "cli_installed": "Installed at {{path}}",
+    "ai_btn": "Let AI Use Fleet",
+    "ai_btn_hint": "Teach your AI assistant to use Fleet CLI to monitor Claude Code agents",
+    "ai_modal_title": "Let AI Use Claude Fleet",
+    "ai_modal_desc": "Two steps to let your AI assistant (Claude Code, Cursor, etc.) monitor and manage Claude Code agents using Fleet.",
+    "ai_step1_title": "Make fleet available in PATH",
+    "ai_step1_desc": "The fleet CLI must be in PATH so AI can run it in the terminal.",
+    "ai_step1_other": "Download the fleet binary from the releases page and place it in your PATH (e.g. /usr/local/bin/).",
+    "ai_step2_title": "Install Fleet Skill for AI",
+    "ai_step2_desc": "Installs a skill file to each detected AI tool's skills directory, teaching it how to use Fleet.",
+    "ai_no_tools": "No compatible AI tools detected (Claude Code, Cursor, GitHub Copilot, Gemini CLI).",
+    "ai_skill_install_btn": "Install Skill",
+    "ai_skill_installing": "Installing…",
+    "ai_skill_installed_btn": "Skill Installed",
+    "ai_skill_save_btn": "Save skill file…",
+    "ai_modal_close": "Done"
   },
   "chart": {
     "title": "Token Speed",
@@ -85,5 +105,101 @@
     "close": "Close",
     "path": "Path"
   },
-  "stop_session": "Stop session (kill process tree)"
+  "stop_session": "Stop session (kill process tree)",
+  "onboarding": {
+    "welcome": "Welcome to Claude Fleet",
+    "subtitle": "Monitor all your Claude Code sessions in one place",
+    "checking": "Checking setup...",
+    "skip": "Skip",
+    "dismiss": "Got it, let's go",
+    "recheck": "Re-check",
+    "no_claude_at_all": {
+      "title": "Claude Code not detected",
+      "description": "Claude Fleet monitors Claude Code sessions. No CLI, IDE extension, or prior sessions were found on this machine.",
+      "install_vscode": "Install VS Code extension",
+      "install_vscode_hint": "Search for \"Claude Code\" in the VS Code Extensions marketplace, or install via the Anthropic website."
+    },
+    "cli_not_installed": {
+      "install_npm": "Install CLI via npm",
+      "install_npm_cmd": "npm install -g @anthropic-ai/claude-code",
+      "install_brew": "Install CLI via Homebrew (macOS)",
+      "install_brew_cmd": "brew install claude-code",
+      "after_install": "After installation, restart Claude Fleet or click Re-check."
+    },
+    "cli_not_in_path": {
+      "title": "CLI not in PATH (optional)",
+      "description": "Claude Code is working via your IDE extension. The standalone CLI binary was not found in your PATH, but this is completely fine.",
+      "optional_hint": "Installing the standalone CLI is optional — it gives you terminal access to Claude Code but won't affect session monitoring."
+    },
+    "not_logged_in": {
+      "title": "Not logged in to Claude",
+      "description": "Claude Fleet needs your Claude credentials to display account info and usage. Choose your tool below for login instructions.",
+      "api_key": "Using an API key?",
+      "api_key_hint": "If you use an API key instead of OAuth, account info won't be available, but session monitoring still works."
+    },
+    "login_tabs": {
+      "detected": "detected",
+      "cli": {
+        "label": "CLI",
+        "hint": "Run this in your terminal to authenticate:",
+        "browser": "This will open a browser window to log in with your Anthropic account."
+      },
+      "vscode": {
+        "label": "VS Code",
+        "step1": "1. Open VS Code with the Claude Code extension installed.",
+        "step2": "2. Open the Claude Code sidebar panel (or Cmd+Shift+P > \"Claude Code: Open\").",
+        "step3": "3. Follow the sign-in prompt — it will open your browser to authenticate."
+      },
+      "jetbrains": {
+        "label": "JetBrains",
+        "step1": "1. Open your JetBrains IDE with the Claude Code plugin installed.",
+        "step2": "2. Open the Claude Code tool window and follow the sign-in prompt."
+      },
+      "desktop": {
+        "label": "Desktop",
+        "step1": "1. Open the Claude Desktop app.",
+        "step2": "2. Sign in with your Anthropic account when prompted."
+      }
+    },
+    "credentials_invalid": {
+      "title": "Credentials may be expired",
+      "description": "We found credentials but couldn't load your account info. Your token may have expired.",
+      "relogin_cmd": "claude login",
+      "relogin_hint": "Run this command to refresh your authentication.",
+      "check_network": "If you're behind a proxy or firewall, check your network connection.",
+      "still_works": "Session monitoring still works without valid credentials — only the Account & Usage panel is affected."
+    },
+    "waiting": {
+      "title": "Waiting for first session...",
+      "description": "Everything looks good! Start a Claude Code session anywhere and it will appear here automatically.",
+      "hint_terminal": "Terminal: run \"claude\" to start a session",
+      "hint_ide": "IDE: use the Claude Code extension in VS Code, JetBrains, or any supported editor"
+    },
+    "celebration": {
+      "title": "First session detected!",
+      "description": "Congratulations! Claude Fleet is now monitoring your sessions. Enjoy the dashboard!"
+    },
+    "all_good": {
+      "title": "All set!",
+      "description": "Claude Code is installed, you're logged in, and sessions are being monitored."
+    },
+    "copy_hint": "Click to copy"
+  },
+  "wizard": {
+    "skip": "Skip",
+    "next": "Next",
+    "done": "Got it",
+    "view_toggle": {
+      "title": "Switch Views",
+      "desc": "Toggle between List and Gallery view. List view shows session details in a sidebar, while Gallery view displays all sessions as cards in a grid."
+    },
+    "token_speed": {
+      "title": "Token Speed",
+      "desc": "Real-time chart showing the combined token output speed across all active sessions. Helps you monitor overall throughput at a glance."
+    },
+    "account_info": {
+      "title": "Account & Usage",
+      "desc": "Check your account details and rate limit usage here. Tracks your 5-hour session limit, weekly quota, and Sonnet usage with trend comparisons."
+    }
+  }
 }

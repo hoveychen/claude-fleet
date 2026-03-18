@@ -249,3 +249,245 @@
   opacity: 0.4;
   cursor: default;
 }
+
+.cli_section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+.cli_install_btn {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--color-accent);
+  background: none;
+  color: var(--color-accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cli_install_btn:hover:not(:disabled) {
+  background: rgba(var(--color-accent-rgb, 99, 102, 241), 0.1);
+}
+
+.cli_install_btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cli_success {
+  font-size: 10px;
+  color: #4ade80;
+}
+
+.cli_error {
+  font-size: 10px;
+  color: #f87171;
+}
+
+/* ── AI Setup Modal ─────────────────────────────────────────────────────────── */
+
+.modal_overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.modal {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  width: 100%;
+  max-width: 380px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.modal_header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal_icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.modal_title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.modal_desc {
+  font-size: 11px;
+  color: var(--color-text-dim);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.modal_step {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.step_label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.step_num {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.step_title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.step_desc {
+  font-size: 11px;
+  color: var(--color-text-dim);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.step_hint {
+  font-size: 10px;
+  color: var(--color-text-dim);
+  margin: 0;
+  font-style: italic;
+}
+
+.tool_list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+.tool_row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.tool_name {
+  font-size: 11px;
+  color: var(--color-text);
+}
+
+.tool_path {
+  font-size: 10px;
+  color: var(--color-text-dim);
+  font-family: monospace;
+  padding-left: 12px;
+  word-break: break-all;
+}
+
+.step_action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.step_btn {
+  font-size: 11px;
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--color-accent);
+  background: none;
+  color: var(--color-accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.step_btn:hover:not(:disabled) {
+  background: rgba(var(--color-accent-rgb, 99, 102, 241), 0.1);
+}
+
+.step_btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.step_btn_secondary {
+  font-size: 11px;
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: none;
+  color: var(--color-text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.step_btn_secondary:hover {
+  color: var(--color-text);
+  border-color: var(--color-text-dim);
+}
+
+.step_ok {
+  font-size: 10px;
+  color: #4ade80;
+  word-break: break-all;
+}
+
+.step_err {
+  font-size: 10px;
+  color: #f87171;
+  word-break: break-all;
+}
+
+.modal_footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.modal_close_btn {
+  font-size: 12px;
+  padding: 5px 16px;
+  border-radius: 5px;
+  border: 1px solid var(--color-border);
+  background: none;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.modal_close_btn:hover {
+  background: var(--color-bg-secondary);
+}

@@ -666,6 +666,10 @@ pub fn scan_sessions(claude_dir: &Path) -> Vec<SessionInfo> {
         if !session.is_subagent
             && session.parent_session_id.is_none()
             && active_parent_ids.contains(&session.id)
+            && matches!(
+                session.status,
+                SessionStatus::Active | SessionStatus::Idle | SessionStatus::WaitingInput | SessionStatus::Processing
+            )
         {
             session.status = SessionStatus::Delegating;
         }

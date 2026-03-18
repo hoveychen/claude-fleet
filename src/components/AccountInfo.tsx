@@ -6,7 +6,7 @@ import styles from "./AccountInfo.module.css";
 const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 interface UsageStats {
-  utilization: number; // 0–100
+  utilization: number; // 0–1 fraction
   resets_at: string;
   prev_utilization: number | null;
 }
@@ -53,10 +53,10 @@ function UsageBar({
 }) {
   const { t } = useTranslation();
   if (!stats) return null;
-  const pct = Math.round(stats.utilization);
+  const pct = Math.round(stats.utilization * 100);
   const prev =
     stats.prev_utilization !== null && stats.prev_utilization !== undefined
-      ? Math.round(stats.prev_utilization)
+      ? Math.round(stats.prev_utilization * 100)
       : null;
 
   let trend: "faster" | "slower" | "similar" | null = null;
@@ -122,6 +122,10 @@ export function AccountInfo() {
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [, setTick] = useState(0); // force re-render for "Xm ago" display
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isMacOS, setIsMacOS] = useState(false);
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [cliInstallState, setCliInstallState] = useState<"idle" | "installing" | "done" | "error">("idle");
+  const [cliInstallMsg, setCliInstallMsg] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -137,6 +141,24 @@ export function AccountInfo() {
       }
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Detect platform
+  useEffect(() => {
+    invoke<string>("get_platform").then((p) => setIsMacOS(p === "macos"));
+  }, []);
+
+  async function installCLI() {
+    setCliInstallState("installing");
+    setCliInstallMsg(null);
+    try {
+      const path = await invoke<string>("install_fleet_cli");
+      setCliInstallState("done");
+      setCliInstallMsg(t("account.cli_installed", { path }));
+    } catch (e) {
+      setCliInstallState("error");
+      setCliInstallMsg(String(e));
     }
   }
 
@@ -216,6 +238,16 @@ export function AccountInfo() {
             </>
           )}
 
+          <div className={styles.cli_section}>
+            <button
+              className={styles.cli_install_btn}
+              onClick={() => setShowAiModal(true)}
+              title={t("account.ai_btn_hint")}
+            >
+              {t("account.ai_btn")}
+            </button>
+          </div>
+
           <div className={styles.footer}>
             {lastUpdated && !loading && (
               <span className={styles.last_updated}>
@@ -243,6 +275,173 @@ export function AccountInfo() {
           </div>
         </div>
       )}
+      {showAiModal && (
+        <AiSetupModal
+          onClose={() => setShowAiModal(false)}
+          isMacOS={isMacOS}
+          cliInstallState={cliInstallState}
+          cliInstallMsg={cliInstallMsg}
+          onInstallCLI={installCLI}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── AI Setup Modal ────────────────────────────────────────────────────────────
+
+interface DetectedTool {
+  name: string;
+  skill_path: string;
+}
+
+interface SkillInstallResult {
+  installed: DetectedTool[];
+  errors: string[];
+}
+
+interface AiSetupModalProps {
+  onClose: () => void;
+  isMacOS: boolean;
+  cliInstallState: "idle" | "installing" | "done" | "error";
+  cliInstallMsg: string | null;
+  onInstallCLI: () => void;
+}
+
+function AiSetupModal({ onClose, isMacOS, cliInstallState, cliInstallMsg, onInstallCLI }: AiSetupModalProps) {
+  const { t } = useTranslation();
+  const [detectedTools, setDetectedTools] = useState<DetectedTool[] | null>(null);
+  const [skillState, setSkillState] = useState<"idle" | "installing" | "done" | "error">("idle");
+  const [installResult, setInstallResult] = useState<SkillInstallResult | null>(null);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+
+  // Detect tools on mount
+  useEffect(() => {
+    invoke<DetectedTool[]>("detect_ai_tools")
+      .then(setDetectedTools)
+      .catch(() => setDetectedTools([]));
+  }, []);
+
+  async function saveSkillFile() {
+    setSaveMsg(null);
+    try {
+      const path = await invoke<string>("save_skill_file");
+      setSaveMsg(path);
+    } catch (e) {
+      if (String(e) !== "cancelled") setSaveMsg("✗ " + String(e));
+    }
+  }
+
+  async function installSkill() {
+    setSkillState("installing");
+    try {
+      const result = await invoke<SkillInstallResult>("install_fleet_skill");
+      setInstallResult(result);
+      setSkillState(result.installed.length > 0 ? "done" : "error");
+    } catch (e) {
+      setInstallResult({ installed: [], errors: [String(e)] });
+      setSkillState("error");
+    }
+  }
+
+  const noToolsDetected = detectedTools !== null && detectedTools.length === 0;
+
+  return (
+    <div className={styles.modal_overlay} onClick={onClose}>
+      <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <div className={styles.modal_header}>
+          <span className={styles.modal_icon}>🤖</span>
+          <h3 className={styles.modal_title}>{t("account.ai_modal_title")}</h3>
+        </div>
+        <p className={styles.modal_desc}>{t("account.ai_modal_desc")}</p>
+
+        {/* Step 1: CLI in PATH */}
+        <div className={styles.modal_step}>
+          <div className={styles.step_label}>
+            <span className={styles.step_num}>1</span>
+            <span className={styles.step_title}>{t("account.ai_step1_title")}</span>
+          </div>
+          <p className={styles.step_desc}>{t("account.ai_step1_desc")}</p>
+          {isMacOS ? (
+            <div className={styles.step_action}>
+              <button
+                className={styles.step_btn}
+                onClick={onInstallCLI}
+                disabled={cliInstallState === "installing" || cliInstallState === "done"}
+              >
+                {cliInstallState === "installing"
+                  ? t("account.cli_installing")
+                  : cliInstallState === "done"
+                  ? "✓ " + t("account.cli_installed_btn")
+                  : t("account.cli_install_btn")}
+              </button>
+              {cliInstallMsg && (
+                <span className={cliInstallState === "done" ? styles.step_ok : styles.step_err}>
+                  {cliInstallMsg}
+                </span>
+              )}
+            </div>
+          ) : (
+            <p className={styles.step_hint}>{t("account.ai_step1_other")}</p>
+          )}
+        </div>
+
+        {/* Step 2: Install skill */}
+        <div className={styles.modal_step}>
+          <div className={styles.step_label}>
+            <span className={styles.step_num}>2</span>
+            <span className={styles.step_title}>{t("account.ai_step2_title")}</span>
+          </div>
+          <p className={styles.step_desc}>{t("account.ai_step2_desc")}</p>
+
+          {/* Results after install */}
+          {installResult && (
+            <div className={styles.tool_list}>
+              {installResult.installed.map((tool) => (
+                <div key={tool.name} className={styles.tool_row}>
+                  <span className={styles.step_ok}>✓ {tool.name}</span>
+                  <span className={styles.tool_path}>{tool.skill_path}</span>
+                </div>
+              ))}
+              {installResult.errors.map((err, i) => (
+                <p key={i} className={styles.step_err}>{err}</p>
+              ))}
+            </div>
+          )}
+
+          {!installResult && noToolsDetected && (
+            <p className={styles.step_hint}>{t("account.ai_no_tools")}</p>
+          )}
+
+          <div className={styles.step_action}>
+            <button
+              className={styles.step_btn}
+              onClick={installSkill}
+              disabled={noToolsDetected || skillState === "installing" || skillState === "done"}
+            >
+              {skillState === "installing"
+                ? t("account.ai_skill_installing")
+                : skillState === "done"
+                ? "✓ " + t("account.ai_skill_installed_btn")
+                : t("account.ai_skill_install_btn")}
+            </button>
+            <button className={styles.step_btn_secondary} onClick={saveSkillFile}>
+              {t("account.ai_skill_save_btn")}
+            </button>
+          </div>
+          {saveMsg && (
+            <span className={saveMsg.startsWith("✗") ? styles.step_err : styles.step_ok}>
+              {saveMsg.startsWith("✗") ? saveMsg : "✓ " + saveMsg}
+            </span>
+          )}
+        </div>
+
+        <div className={styles.modal_footer}>
+          <button className={styles.modal_close_btn} onClick={onClose}>
+            {t("account.ai_modal_close")}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

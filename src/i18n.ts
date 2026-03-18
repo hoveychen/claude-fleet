@@ -3,7 +3,14 @@ import { initReactI18next } from "react-i18next";
 import en from "./locales/en.json";
 import zh from "./locales/zh.json";
 
-const savedLang = localStorage.getItem("lang") ?? "en";
+function detectLanguage(): string {
+  const saved = localStorage.getItem("lang");
+  if (saved) return saved;
+  const locale = navigator.language || "";
+  return locale.startsWith("zh") ? "zh" : "en";
+}
+
+const savedLang = detectLanguage();
 
 i18n.use(initReactI18next).init({
   resources: {

@@ -5,10 +5,15 @@ description = "Claude Fleet - Monitor all Claude sessions"
 authors = ["hoveychen"]
 license = "AGPL-3.0-only"
 edition = "2021"
+default-run = "claude-fleet"
 
 [lib]
 name = "claude_fleet_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "fleet-cli"
+path = "src/bin/fleet.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -24,3 +29,5 @@ libc = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
+clap = { version = "4", features = ["derive"] }
+rfd = "0.15"
