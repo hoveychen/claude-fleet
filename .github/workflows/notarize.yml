@@ -1,0 +1,88 @@
+name: Notarize macOS
+
+# Triggered automatically after Release workflow succeeds,
+# or manually for a specific tag.
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to notarize (e.g. v0.1.1)'
+        required: true
+        type: string
+
+jobs:
+  notarize:
+    name: Notarize — ${{ matrix.name }}
+    # For workflow_run: only run if the release succeeded
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Apple Silicon
+            arch_pattern: '*aarch64*.dmg'
+          - name: Intel
+            arch_pattern: '*x64*.dmg'
+
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            # workflow_run: head_branch contains the tag name when triggered by tag push
+            echo "tag=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download DMG from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dmg-work
+          gh release download "${{ steps.tag.outputs.tag }}" \
+            --pattern "${{ matrix.arch_pattern }}" \
+            --dir dmg-work/ \
+            --repo "${{ github.repository }}"
+          echo "Downloaded:"
+          ls -lh dmg-work/
+
+      - name: Notarize and staple
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for dmg in dmg-work/*.dmg; do
+            echo "── Submitting $(basename "$dmg") for notarization..."
+            xcrun notarytool submit "$dmg" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+            echo "── Stapling $(basename "$dmg")..."
+            xcrun stapler staple "$dmg"
+            echo "── Done: $(basename "$dmg")"
+          done
+
+      - name: Replace release asset with notarized DMG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for dmg in dmg-work/*.dmg; do
+            echo "Uploading $(basename "$dmg") → ${{ steps.tag.outputs.tag }}"
+            gh release upload "${{ steps.tag.outputs.tag }}" "$dmg" \
+              --clobber \
+              --repo "${{ github.repository }}"
+          done
