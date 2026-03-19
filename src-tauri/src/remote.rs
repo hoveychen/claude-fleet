@@ -80,6 +80,8 @@ pub struct ConnectProgress {
     pub step: String,
     pub done: bool,
     pub error: Option<String>,
+    /// When true, the frontend should replace the last progress entry instead of appending.
+    pub update_last: bool,
 }
 
 fn emit_progress(app: &AppHandle, step: &str, done: bool, error: Option<&str>) {
@@ -89,6 +91,20 @@ fn emit_progress(app: &AppHandle, step: &str, done: bool, error: Option<&str>) {
             step: step.to_string(),
             done,
             error: error.map(|s| s.to_string()),
+            update_last: false,
+        },
+    );
+}
+
+/// Like `emit_progress` but replaces the last progress entry in the frontend (for live updates).
+fn emit_progress_update(app: &AppHandle, step: &str) {
+    let _ = app.emit(
+        "remote-connect-progress",
+        ConnectProgress {
+            step: step.to_string(),
+            done: false,
+            error: None,
+            update_last: true,
         },
     );
 }
@@ -223,6 +239,62 @@ pub fn list_ssh_profiles() -> Vec<String> {
         }
     }
     profiles
+}
+
+/// Run a download command via SSH, streaming progress lines `"<current_bytes> <total_bytes>"`.
+/// The remote script must print `DONE` on success or `FAILED` on failure as its last line.
+fn ssh_download_with_progress<F>(
+    conn: &RemoteConnection,
+    remote_cmd: &str,
+    mut on_progress: F,
+) -> Result<(), String>
+where
+    F: FnMut(u64, u64),
+{
+    use std::io::BufRead;
+
+    let mut args = base_ssh_args(conn);
+    args.push(remote_cmd.to_string());
+
+    let mut child = std::process::Command::new("ssh")
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("ssh spawn failed: {e}"))?;
+
+    let stdout = child.stdout.take().ok_or("no stdout from ssh")?;
+    let reader = std::io::BufReader::new(stdout);
+
+    let mut success = false;
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+        let line = line.trim();
+        if line == "DONE" {
+            success = true;
+            break;
+        } else if line == "FAILED" {
+            break;
+        } else {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                let cur: u64 = parts[0].parse().unwrap_or(0);
+                let total: u64 = parts[1].parse().unwrap_or(0);
+                on_progress(cur, total);
+            }
+        }
+    }
+
+    child.wait().ok();
+
+    if success {
+        Ok(())
+    } else {
+        Err("Remote download failed".to_string())
+    }
 }
 
 /// Run an SSH command on the remote host and return (stdout, stderr, success).
@@ -435,20 +507,34 @@ fn connect_remote_impl(
             );
             emit_progress(
                 app,
-                &format!("Downloading fleet binary for {remote_uname} from GitHub releases…"),
+                &format!("Downloading fleet binary for {remote_uname}…"),
                 false,
                 None,
             );
+            // Bash script: fetches Content-Length first, then downloads in background
+            // while printing "<current_bytes> <total_bytes>" lines for progress.
+            // Prints DONE or FAILED as the final line.
+            let bin = remote_fleet_path();
             let dl_cmd = format!(
-                r#"curl -fsSL "{url}" -o {bin} && chmod +x {bin} && echo ok"#,
+                r#"TOTAL=$(curl -sI "{url}" 2>/dev/null | grep -i 'content-length' | tail -1 | tr -d '\r' | awk '{{print $2}}'); [ -z "$TOTAL" ] && TOTAL=0; curl -fL "{url}" -o {bin}.tmp 2>/dev/null & CURL_PID=$!; while kill -0 $CURL_PID 2>/dev/null; do CUR=$(stat -c '%s' {bin}.tmp 2>/dev/null || echo 0); echo "$CUR $TOTAL"; sleep 0.5; done; wait $CURL_PID; if [ $? -eq 0 ]; then mv {bin}.tmp {bin} && chmod +x {bin} && echo DONE; else rm -f {bin}.tmp; echo FAILED; fi"#,
                 url = dl_url,
-                bin = remote_fleet_path(),
+                bin = bin,
             );
-            if ssh_exec(&conn, &dl_cmd)
-                .map(|out| out.trim() == "ok")
-                .unwrap_or(false)
-            {
-                emit_progress(app, "Download complete.", false, None);
+            let app_ref = app;
+            let result = ssh_download_with_progress(&conn, &dl_cmd, |cur, total| {
+                let step = if total > 0 {
+                    let pct = (cur as f64 / total as f64 * 100.0) as u32;
+                    let cur_mb = cur as f64 / 1_048_576.0;
+                    let total_mb = total as f64 / 1_048_576.0;
+                    format!("Downloading fleet binary… {pct}% ({cur_mb:.1}/{total_mb:.1} MB)")
+                } else {
+                    let cur_mb = cur as f64 / 1_048_576.0;
+                    format!("Downloading fleet binary… {cur_mb:.1} MB")
+                };
+                emit_progress_update(app_ref, &step);
+            });
+            if result.is_ok() {
+                emit_progress_update(app, "Downloading fleet binary… complete.");
                 // Binary is already in place — skip SCP, go straight to probe startup
                 return connect_remote_start_probe(conn, app, sessions, remote, is_remote, remote_uname);
             }
@@ -698,6 +784,45 @@ pub fn disconnect_remote(
 /// Encode a path for use in a query parameter.
 pub fn encode_path(path: &str) -> String {
     utf8_percent_encode(path, NON_ALPHANUMERIC).to_string()
+}
+
+/// POST `{base_url}/stop?pid=<pid>&force=<bool>` to kill a process on the remote host.
+pub fn remote_kill_session(base_url: &str, token: &str, pid: u32, force: bool) -> Result<(), String> {
+    let url = format!("{}/stop?pid={}&force={}", base_url, pid, force);
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("Remote stop error: HTTP {}", resp.status()));
+    }
+    Ok(())
+}
+
+/// GET `{base_url}/account` and return the remote `AccountInfo`.
+pub fn remote_get_account_info(
+    base_url: &str,
+    token: &str,
+) -> Result<crate::account::AccountInfo, String> {
+    let url = format!("{}/account", base_url);
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("Remote account error: HTTP {}", resp.status()));
+    }
+    resp.json::<crate::account::AccountInfo>().map_err(|e| e.to_string())
 }
 
 /// GET `{base_url}/messages?path=<encoded>` and return raw JSON values.

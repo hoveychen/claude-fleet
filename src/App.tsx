@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
 import "./App.css";
 import { ConnectionDialog } from "./components/ConnectionDialog";
@@ -6,19 +7,29 @@ import { Onboarding } from "./components/Onboarding";
 import { SessionDetail } from "./components/SessionDetail";
 import { SessionList } from "./components/SessionList";
 import { Wizard } from "./components/Wizard";
-import { resolveTheme, useConnectionStore, useUIStore } from "./store";
+import { resolveTheme, useConnectionStore, useDetailStore, useUIStore } from "./store";
 
 const ONBOARDING_DISMISSED_KEY = "onboarding-dismissed";
 const WIZARD_COMPLETED_KEY = "wizard-completed";
 
 function App() {
   const { theme, viewMode } = useUIStore();
-  const { connected, setConnected } = useConnectionStore();
+  const { connected, setConnected, disconnect } = useConnectionStore();
 
   const [showOnboarding, setShowOnboarding] = useState(() => {
     return !localStorage.getItem(ONBOARDING_DISMISSED_KEY);
   });
   const [showWizard, setShowWizard] = useState(false);
+
+  useEffect(() => {
+    const unlisten = listen("switch-connection", () => {
+      useDetailStore.getState().close();
+      disconnect();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [disconnect]);
 
   useEffect(() => {
     const apply = () => {

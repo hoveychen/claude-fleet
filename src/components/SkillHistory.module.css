@@ -1,0 +1,53 @@
+.root {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+  padding: 6px 16px;
+}
+
+.title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--color-bg-secondary);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+.name {
+  font-family: var(--font-mono);
+  color: var(--tag-skill-fg);
+  background: var(--tag-skill-bg);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+.args {
+  color: var(--color-text-secondary);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.time {
+  color: var(--color-text-dim);
+  font-size: 10px;
+  flex-shrink: 0;
+}

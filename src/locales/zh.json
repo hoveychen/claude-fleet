@@ -106,6 +106,18 @@
     "path": "路径"
   },
   "stop_session": "停止会话（清除进程树）",
+  "card": {
+    "tip_main": "主进程会话",
+    "tip_subagent": "子进程",
+    "tip_subagent_desc": "子进程：{{desc}}",
+    "tip_ide": "从 {{name}} 启动",
+    "tip_model": "模型：{{model}}",
+    "tip_thinking": "扩展思考：{{level}}",
+    "tip_skill": "最近调用的 Skill：/{{skill}}",
+    "tip_slug": "会话 ID 标识：{{slug}}",
+    "tip_tokens": "已生成的 Token 总数",
+    "tip_speed": "Token 输出速度"
+  },
   "onboarding": {
     "welcome": "欢迎使用 Claude Fleet",
     "subtitle": "在一处监控你所有的 Claude Code 会话",

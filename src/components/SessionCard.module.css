@@ -207,6 +207,7 @@
 .tag_ide     { background: var(--color-bg-secondary); color: var(--color-text-dim); }
 .tag_model   { background: var(--color-bg-secondary); color: var(--color-text-secondary); }
 .tag_thinking{ background: var(--thinking-toggle-bg); color: var(--thinking-label); display: inline-flex; align-items: center; }
+.tag_skill   { background: var(--tag-skill-bg); color: var(--tag-skill-fg); font-family: var(--font-mono); }
 
 .slug {
   font-size: 10px;

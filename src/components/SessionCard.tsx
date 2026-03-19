@@ -101,7 +101,7 @@ function TokenSpeed({ speed }: { speed: number }) {
   const { t } = useTranslation();
   if (speed < 0.5) return null;
   return (
-    <span className={styles.speed}>
+    <span className={styles.speed} title={t("card.tip_speed")}>
       {speed.toFixed(1)} <span className={styles.speed_unit}>{t("tok_s")}</span>
     </span>
   );
@@ -117,7 +117,7 @@ function TimeAgo({ ms }: { ms: number }) {
   else if (diff < 3_600_000) label = t("m_ago", { n: Math.floor(diff / 60_000) });
   else if (diff < 86_400_000) label = t("h_ago", { n: Math.floor(diff / 3_600_000) });
   else label = t("d_ago", { n: Math.floor(diff / 86_400_000) });
-  return <span className={styles.time}>{label}</span>;
+  return <span className={styles.time} title={new Date(ms).toLocaleString()}>{label}</span>;
 }
 
 // ── Model name formatter ──────────────────────────────────────────────────────
@@ -189,20 +189,20 @@ export function SessionCard({ session, isSelected, onClick, variant, hideHeader 
       {/* Meta row */}
       <div className={styles.meta}>
         {session.isSubagent ? (
-          <span className={styles.tag_subagent}>
+          <span className={styles.tag_subagent} title={session.agentDescription ? t("card.tip_subagent_desc", { desc: session.agentDescription }) : t("card.tip_subagent")}>
             ⎇ {session.agentType ?? t("subagent")}
           </span>
         ) : (
-          <span className={styles.tag_main}>◈ {t("main")}</span>
+          <span className={styles.tag_main} title={t("card.tip_main")}>◈ {t("main")}</span>
         )}
         {session.ideName && (
-          <span className={styles.tag_ide}>{session.ideName}</span>
+          <span className={styles.tag_ide} title={t("card.tip_ide", { name: session.ideName })}>{session.ideName}</span>
         )}
         {session.model && (
-          <span className={styles.tag_model}>{formatModel(session.model)}</span>
+          <span className={styles.tag_model} title={t("card.tip_model", { model: session.model })}>{formatModel(session.model)}</span>
         )}
         {session.thinkingLevel && session.thinkingLevel !== "medium" && (
-          <span className={styles.tag_thinking} title={session.thinkingLevel}>
+          <span className={styles.tag_thinking} title={t("card.tip_thinking", { level: session.thinkingLevel })}>
             <svg viewBox="0 0 8 11" width="9" height="9" fill="currentColor" aria-hidden>
               <path d="M4 0.5 C1.2 0.5 0.5 2.8 0.5 4.5 C0.5 6.3 1.8 7.4 2.3 8 L2.3 9.3 L5.7 9.3 L5.7 8 C6.2 7.4 7.5 6.3 7.5 4.5 C7.5 2.8 6.8 0.5 4 0.5Z" />
               <line x1="2.5" y1="9.7" x2="5.5" y2="9.7" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
@@ -210,20 +210,23 @@ export function SessionCard({ session, isSelected, onClick, variant, hideHeader 
             </svg>
           </span>
         )}
+        {session.lastSkill && (
+          <span className={styles.tag_skill} title={t("card.tip_skill", { skill: session.lastSkill })}>/{session.lastSkill}</span>
+        )}
         {session.slug && (
-          <span className={styles.slug}>{session.slug}</span>
+          <span className={styles.slug} title={t("card.tip_slug", { slug: session.slug })}>{session.slug}</span>
         )}
       </div>
 
       {/* Preview */}
       {session.lastMessagePreview && (
-        <p className={styles.preview}>{session.lastMessagePreview}</p>
+        <p className={styles.preview} title={session.lastMessagePreview}>{session.lastMessagePreview}</p>
       )}
 
       {/* Footer row */}
       <div className={styles.footer}>
         <TokenSpeed speed={session.tokenSpeed} />
-        <span className={styles.tokens}>
+        <span className={styles.tokens} title={t("card.tip_tokens")}>
           {session.totalOutputTokens.toLocaleString()} {t("tokens")}
         </span>
         <TimeAgo ms={session.lastActivityMs} />

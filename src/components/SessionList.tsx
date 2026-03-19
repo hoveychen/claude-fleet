@@ -92,7 +92,7 @@ export function SessionList() {
         (s) =>
           s.isSubagent &&
           s.parentSessionId &&
-          ["streaming", "processing", "waitingInput", "active"].includes(s.status)
+          ["thinking", "executing", "streaming", "processing", "waitingInput", "active"].includes(s.status)
       )
       .map((s) => s.parentSessionId!)
   );
@@ -105,7 +105,7 @@ export function SessionList() {
   );
 
   const active = promoted.filter((s) =>
-    ["streaming", "processing", "waitingInput", "active", "delegating"].includes(s.status)
+    ["thinking", "executing", "streaming", "processing", "waitingInput", "active", "delegating"].includes(s.status)
   );
   const idle = promoted.filter((s) => s.status === "idle");
 
@@ -153,7 +153,7 @@ export function SessionList() {
 
   // Count active agents for header
   const activeCount = sessions.filter((s) =>
-    ["streaming", "processing", "waitingInput", "active"].includes(s.status)
+    ["thinking", "executing", "streaming", "processing", "waitingInput", "active", "delegating"].includes(s.status)
   ).length;
 
   return (

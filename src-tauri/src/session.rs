@@ -60,6 +60,7 @@ pub struct SessionInfo {
     pub model: Option<String>,
     pub thinking_level: Option<String>,
     pub pid: Option<u32>,
+    pub last_skill: Option<String>,
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -354,7 +355,7 @@ fn extract_model(last_lines: &[Value]) -> Option<String> {
             .and_then(|m| m.get("model"))
             .and_then(|m| m.as_str())
             .unwrap_or_default();
-        if !model.is_empty() && model != "unknown" {
+        if !model.is_empty() && model != "unknown" && model != "<synthetic>" {
             return Some(model.to_string());
         }
     }
@@ -398,6 +399,35 @@ fn extract_last_text(last_lines: &[Value]) -> Option<String> {
                 if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
                     let preview: String = text.chars().take(200).collect();
                     return Some(preview);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_last_skill(last_lines: &[Value]) -> Option<String> {
+    for msg in last_lines.iter().rev() {
+        if msg.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(content) = msg
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_array())
+        else {
+            continue;
+        };
+        for block in content.iter().rev() {
+            if block.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+                && block.get("name").and_then(|n| n.as_str()) == Some("Skill")
+            {
+                if let Some(skill) = block
+                    .get("input")
+                    .and_then(|i| i.get("skill"))
+                    .and_then(|s| s.as_str())
+                {
+                    return Some(skill.to_string());
                 }
             }
         }
@@ -461,6 +491,7 @@ fn parse_session_info(
         .last();
 
     let model = meta_model.or_else(|| extract_model(&last_n));
+    let last_skill = extract_last_skill(&last_n);
 
     // Prefer explicit thinking level from meta; fall back to detecting thinking blocks
     let thinking_level = meta_thinking_level.or_else(|| {
@@ -491,6 +522,7 @@ fn parse_session_info(
         model,
         thinking_level,
         pid,
+        last_skill,
     })
 }
 

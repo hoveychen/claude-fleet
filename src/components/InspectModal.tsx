@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useDetailStore } from "../store";
 import type { SessionInfo } from "../types";
 import { MessageList } from "./MessageList";
+import { SkillHistory } from "./SkillHistory";
 import styles from "./InspectModal.module.css";
 
 interface Props {
@@ -63,6 +64,9 @@ export function InspectModal({ session, onClose }: Props) {
 
         {/* Path */}
         <div className={styles.path}>{session.workspacePath}</div>
+
+        {/* Skill history */}
+        <SkillHistory jsonlPath={session.jsonlPath} />
 
         {/* Messages */}
         <div className={styles.scroll_area}>

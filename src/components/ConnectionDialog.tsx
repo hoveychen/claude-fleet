@@ -21,6 +21,7 @@ interface ConnectProgress {
   step: string;
   done: boolean;
   error: string | null;
+  updateLast?: boolean;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -91,7 +92,11 @@ export function ConnectionDialog({ onConnected }: Props) {
     let unlisten: (() => void) | null = null;
     listen<ConnectProgress>("remote-connect-progress", (event) => {
       const p = event.payload;
-      setProgressSteps((prev) => [...prev, p.step]);
+      setProgressSteps((prev) =>
+        p.updateLast && prev.length > 0
+          ? [...prev.slice(0, -1), p.step]
+          : [...prev, p.step]
+      );
       if (p.done) {
         setConnectDone(true);
         setConnecting(false);

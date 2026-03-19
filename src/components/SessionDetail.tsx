@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useDetailStore } from "../store";
 import { MessageList } from "./MessageList";
+import { SkillHistory } from "./SkillHistory";
 import styles from "./SessionDetail.module.css";
 
 export function SessionDetail() {
@@ -48,6 +49,9 @@ export function SessionDetail() {
 
       {/* Path */}
       <div className={styles.path}>{session.workspacePath}</div>
+
+      {/* Skill history */}
+      <SkillHistory jsonlPath={session.jsonlPath} />
 
       {/* Messages */}
       <div className={styles.scroll_area}>

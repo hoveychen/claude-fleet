@@ -202,8 +202,17 @@ fn check_cli_installed() -> (bool, Option<String>) {
 }
 
 #[tauri::command]
-fn get_account_info() -> Result<AccountInfo, String> {
+fn get_account_info(state: tauri::State<AppState>) -> Result<AccountInfo, String> {
     log_debug("get_account_info: start");
+    let remote_guard = state.remote.lock().unwrap();
+    if let Some(ref active) = *remote_guard {
+        // Remote mode: fetch account info from the probe on the remote host
+        return remote::remote_get_account_info(&active.base_url, &active.token).map_err(|e| {
+            log_debug(&format!("get_account_info (remote): error: {e}"));
+            e
+        });
+    }
+    drop(remote_guard);
     account::fetch_account_info().map_err(|e| {
         log_debug(&format!("get_account_info: error: {e}"));
         e
@@ -259,6 +268,13 @@ fn kill_session(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    {
+        let remote_guard = state.remote.lock().unwrap();
+        if let Some(ref active) = *remote_guard {
+            return remote::remote_kill_session(&active.base_url, &active.token, pid, false);
+        }
+    }
+
     let pids = collect_process_tree(pid);
     log_debug(&format!(
         "kill_session: SIGTERM to {} pids (root={}): {:?}",
@@ -369,6 +385,79 @@ fn get_messages(
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect();
     Ok(messages)
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SkillInvocation {
+    skill: String,
+    args: Option<String>,
+    timestamp: String,
+}
+
+#[tauri::command]
+fn get_skill_history(jsonl_path: String, state: tauri::State<AppState>) -> Result<Vec<SkillInvocation>, String> {
+    let content = {
+        let remote_guard = state.remote.lock().unwrap();
+        if let Some(ref active) = *remote_guard {
+            // Remote mode: fetch via messages endpoint, re-serialize to JSONL for parsing
+            let messages = remote::remote_get_messages(&active.base_url, &active.token, &jsonl_path)?;
+            messages.iter()
+                .filter_map(|v| serde_json::to_string(v).ok())
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            drop(remote_guard);
+            std::fs::read_to_string(&jsonl_path).map_err(|e| e.to_string())?
+        }
+    };
+    let mut history = Vec::new();
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(msg) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if msg.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        let timestamp = msg
+            .get("timestamp")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
+        let Some(content_blocks) = msg
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_array())
+        else {
+            continue;
+        };
+        for block in content_blocks {
+            if block.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+                && block.get("name").and_then(|n| n.as_str()) == Some("Skill")
+            {
+                if let Some(skill) = block
+                    .get("input")
+                    .and_then(|i| i.get("skill"))
+                    .and_then(|s| s.as_str())
+                {
+                    let args = block
+                        .get("input")
+                        .and_then(|i| i.get("args"))
+                        .and_then(|a| a.as_str())
+                        .map(|s| s.to_string());
+                    history.push(SkillInvocation {
+                        skill: skill.to_string(),
+                        args,
+                        timestamp: timestamp.clone(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(history)
 }
 
 #[tauri::command]
@@ -633,6 +722,12 @@ pub fn run() {
     });
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
             sessions,
@@ -645,10 +740,12 @@ pub fn run() {
             // ── Tray icon ────────────────────────────────────────────────────
             let show_item = MenuItemBuilder::new("Show").id("show").build(app)?;
             let hide_item = MenuItemBuilder::new("Hide").id("hide").build(app)?;
+            let switch_item = MenuItemBuilder::new("Switch Connection").id("switch-connection").build(app)?;
+            let sep = tauri::menu::PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItemBuilder::new("Quit").id("quit").build(app)?;
 
             let tray_menu = MenuBuilder::new(app)
-                .items(&[&show_item, &hide_item, &quit_item])
+                .items(&[&show_item, &hide_item, &sep, &switch_item, &quit_item])
                 .build()?;
 
             let icon = app.default_window_icon().cloned().unwrap();
@@ -668,6 +765,13 @@ pub fn run() {
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = w.hide();
                         }
+                    }
+                    "switch-connection" => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                        let _ = app.emit("switch-connection", ());
                     }
                     "quit" => {
                         app.exit(0);
@@ -700,6 +804,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_sessions,
             get_messages,
+            get_skill_history,
             start_watching_session,
             stop_watching_session,
             get_account_info,

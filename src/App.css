@@ -45,6 +45,7 @@ html, body, #root {
   /* Tag colors */
   --tag-main-bg: #1e2a40;   --tag-main-fg: #93c5fd;
   --tag-sub-bg: #2d1e40;    --tag-sub-fg: #c4b5fd;
+  --tag-skill-bg: #3a1e0a;  --tag-skill-fg: #f97316;
 
   /* Dynamic chip colors (hue set per-element via --chip-hue) */
   --chip-bg-s: 28%; --chip-bg-l: 20%;
@@ -118,6 +119,7 @@ html, body, #root {
   /* Tag colors — light */
   --tag-main-bg: #dbeafe;   --tag-main-fg: #1d4ed8;
   --tag-sub-bg: #f3e8ff;    --tag-sub-fg: #7e22ce;
+  --tag-skill-bg: #fff0e6;  --tag-skill-fg: #c2410c;
 
   /* Dynamic chip colors — light */
   --chip-bg-s: 60%; --chip-bg-l: 92%;

@@ -106,6 +106,18 @@
     "path": "Path"
   },
   "stop_session": "Stop session (kill process tree)",
+  "card": {
+    "tip_main": "Main agent session",
+    "tip_subagent": "Subagent",
+    "tip_subagent_desc": "Subagent: {{desc}}",
+    "tip_ide": "Launched from {{name}}",
+    "tip_model": "Model: {{model}}",
+    "tip_thinking": "Extended thinking: {{level}}",
+    "tip_skill": "Last skill invoked: /{{skill}}",
+    "tip_slug": "Session ID slug: {{slug}}",
+    "tip_tokens": "Total output tokens generated",
+    "tip_speed": "Output token generation speed"
+  },
   "onboarding": {
     "welcome": "Welcome to Claude Fleet",
     "subtitle": "Monitor all your Claude Code sessions in one place",

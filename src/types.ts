@@ -30,6 +30,13 @@ export interface SessionInfo {
   model: string | null;
   thinkingLevel: string | null;
   pid: number | null;
+  lastSkill: string | null;
+}
+
+export interface SkillInvocation {
+  skill: string;
+  args: string | null;
+  timestamp: string;
 }
 
 // ── Message / content block types ───────────────────────────────────────────

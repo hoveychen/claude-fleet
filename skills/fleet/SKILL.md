@@ -45,6 +45,24 @@ fleet account
 fleet speed
 ```
 
+## Remote SSH mode
+
+Any command can be run on a remote host by adding `--remote <host>`:
+
+```bash
+# <host> accepts: user@hostname, hostname (uses current user), or SSH config profile name
+fleet agents --remote user@hostname
+fleet agents --remote myserver --all
+fleet account --remote user@hostname
+fleet speed --remote myserver
+fleet stop <id> --remote user@hostname --force
+```
+
+Fleet will automatically detect if it is installed on the remote host (checking PATH first,
+then `~/.fleet-probe/fleet`). If missing or outdated, it installs the correct binary before
+running the command. SSH config (`~/.ssh/config`) is respected, so jump hosts, custom ports,
+and identity files work without extra flags.
+
 ## Output fields (fleet agents)
 
 | Field | Description |
