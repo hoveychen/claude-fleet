@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Connection } from "../store";
 import styles from "./ConnectionDialog.module.css";
 
 // ── Types mirroring Rust structs ─────────────────────────────────────────────
@@ -47,8 +48,7 @@ function emptyConn(): RemoteConnection {
 // ── Component ────────────────────────────────────────────────────────────────
 
 interface Props {
-  /** Called when connection is established. `null` = local mode. */
-  onConnected: (remote: RemoteConnection | null) => void;
+  onConnected: (conn: Connection) => void;
 }
 
 type Mode = "local" | "remote";
@@ -142,7 +142,7 @@ export function ConnectionDialog({ onConnected }: Props) {
     setConnecting(true);
 
     if (mode === "local") {
-      onConnected(null);
+      onConnected({ type: "local" });
       return;
     }
 
@@ -184,15 +184,18 @@ export function ConnectionDialog({ onConnected }: Props) {
   // When connectDone fires, close after a short delay
   useEffect(() => {
     if (connectDone) {
-      let conn: RemoteConnection | null = null;
+      let remoteConn: RemoteConnection | null = null;
       const formVisible = showForm || savedConns.length === 0;
       if (selectedSavedId && !formVisible) {
-        conn = savedConns.find((c) => c.id === selectedSavedId) ?? null;
+        remoteConn = savedConns.find((c) => c.id === selectedSavedId) ?? null;
       } else {
-        conn = form;
+        remoteConn = form;
       }
-      const t = setTimeout(() => onConnected(conn), 600);
-      return () => clearTimeout(t);
+      if (remoteConn) {
+        const conn = remoteConn;
+        const t = setTimeout(() => onConnected({ type: "remote", connection: conn }), 600);
+        return () => clearTimeout(t);
+      }
     }
   }, [connectDone, onConnected, selectedSavedId, showForm, savedConns, form]);
 

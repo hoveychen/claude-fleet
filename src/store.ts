@@ -6,22 +6,23 @@ import type { RawMessage, SessionInfo } from "./types";
 
 // ── Connection store ──────────────────────────────────────────────────────────
 
+export type Connection =
+  | { type: "local" }
+  | { type: "remote"; connection: RemoteConnection };
+
 interface ConnectionState {
   /** `null` = not yet connected (dialog is shown) */
-  connected: boolean;
-  /** `null` = local mode */
-  remoteConnection: RemoteConnection | null;
-  setConnected: (remote: RemoteConnection | null) => void;
+  connection: Connection | null;
+  setConnection: (conn: Connection) => void;
   disconnect: () => Promise<void>;
 }
 
 export const useConnectionStore = create<ConnectionState>((set) => ({
-  connected: false,
-  remoteConnection: null,
-  setConnected: (remote) => set({ connected: true, remoteConnection: remote }),
+  connection: null,
+  setConnection: (conn) => set({ connection: conn }),
   disconnect: async () => {
     await invoke("disconnect_remote").catch(() => {});
-    set({ connected: false, remoteConnection: null });
+    set({ connection: null });
   },
 }));
 

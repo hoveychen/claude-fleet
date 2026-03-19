@@ -1,7 +1,8 @@
 pub mod account;
+pub mod backend;
+pub mod local_backend;
 pub mod remote;
 pub mod session;
-mod watcher;
 
 use std::fs;
 use std::sync::{Arc, Mutex};
@@ -10,12 +11,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use tauri::tray::TrayIconBuilder;
 
 use account::{AccountInfo, read_keychain_credentials};
-use remote::ActiveRemote;
+use backend::Backend;
 use session::SessionInfo;
-use watcher::WatcherState;
 
 #[tauri::command]
 fn get_log_path() -> String {
@@ -71,30 +71,10 @@ fn check_setup_status(state: tauri::State<AppState>) -> SetupStatus {
         .map(|h| h.join(".claude").is_dir())
         .unwrap_or(false);
 
-    let detected_tools = detect_installed_tools(&state);
+    let sessions = state.backend.lock().unwrap().list_sessions();
+    let detected_tools = detect_installed_tools(&sessions);
     let logged_in = read_keychain_credentials().is_ok();
-
-    // Check if any sessions exist: try in-memory cache first (fast), then
-    // fall back to a quick filesystem scan to avoid a race with the background
-    // watcher thread that may not have finished its first pass yet.
-    let has_sessions = if !state.sessions.lock().unwrap().is_empty() {
-        true
-    } else {
-        session::get_claude_dir().map_or(false, |claude_dir| {
-            let projects_dir = claude_dir.join("projects");
-            fs::read_dir(&projects_dir).map_or(false, |entries| {
-                entries.filter_map(|e| e.ok()).any(|workspace_entry| {
-                    let workspace_dir = workspace_entry.path();
-                    workspace_dir.is_dir()
-                        && fs::read_dir(&workspace_dir).map_or(false, |files| {
-                            files.filter_map(|e| e.ok()).any(|f| {
-                                f.path().extension().and_then(|x| x.to_str()) == Some("jsonl")
-                            })
-                        })
-                })
-            })
-        })
-    };
+    let has_sessions = !sessions.is_empty();
 
     SetupStatus {
         cli_installed,
@@ -107,7 +87,7 @@ fn check_setup_status(state: tauri::State<AppState>) -> SetupStatus {
     }
 }
 
-fn detect_installed_tools(state: &tauri::State<AppState>) -> DetectedTools {
+fn detect_installed_tools(sessions: &[SessionInfo]) -> DetectedTools {
     let home = dirs::home_dir();
 
     // CLI: already checked via PATH / common paths
@@ -127,29 +107,22 @@ fn detect_installed_tools(state: &tauri::State<AppState>) -> DetectedTools {
                 })
             })
         })
-    }) || {
-        // Also check live IDE sessions for VS Code-like IDE names
-        let sessions = state.sessions.lock().unwrap();
-        sessions.iter().any(|s| {
-            s.ide_name.as_deref().map_or(false, |name| {
-                let n = name.to_lowercase();
-                n.contains("vscode") || n.contains("vs code") || n.contains("cursor")
-            })
+    }) || sessions.iter().any(|s| {
+        s.ide_name.as_deref().map_or(false, |name| {
+            let n = name.to_lowercase();
+            n.contains("vscode") || n.contains("vs code") || n.contains("cursor")
         })
-    };
+    });
 
     // JetBrains: check live sessions for JetBrains IDE names
-    let jetbrains = {
-        let sessions = state.sessions.lock().unwrap();
-        sessions.iter().any(|s| {
-            s.ide_name.as_deref().map_or(false, |name| {
-                let n = name.to_lowercase();
-                n.contains("intellij") || n.contains("webstorm") || n.contains("pycharm")
-                    || n.contains("goland") || n.contains("rustrover") || n.contains("phpstorm")
-                    || n.contains("rider") || n.contains("clion") || n.contains("jetbrains")
-            })
+    let jetbrains = sessions.iter().any(|s| {
+        s.ide_name.as_deref().map_or(false, |name| {
+            let n = name.to_lowercase();
+            n.contains("intellij") || n.contains("webstorm") || n.contains("pycharm")
+                || n.contains("goland") || n.contains("rustrover") || n.contains("phpstorm")
+                || n.contains("rider") || n.contains("clion") || n.contains("jetbrains")
         })
-    };
+    });
 
     // Claude Desktop app
     let desktop = {
@@ -204,165 +177,31 @@ fn check_cli_installed() -> (bool, Option<String>) {
 #[tauri::command]
 fn get_account_info(state: tauri::State<AppState>) -> Result<AccountInfo, String> {
     log_debug("get_account_info: start");
-    let remote_guard = state.remote.lock().unwrap();
-    if let Some(ref active) = *remote_guard {
-        // Remote mode: fetch account info from the probe on the remote host
-        return remote::remote_get_account_info(&active.base_url, &active.token).map_err(|e| {
-            log_debug(&format!("get_account_info (remote): error: {e}"));
-            e
-        });
-    }
-    drop(remote_guard);
-    account::fetch_account_info().map_err(|e| {
+    state.backend.lock().unwrap().account_info().map_err(|e| {
         log_debug(&format!("get_account_info: error: {e}"));
         e
     })
 }
 
-// ── Process tree kill ─────────────────────────────────────────────────────────
+// ── Process kill ──────────────────────────────────────────────────────────────
 
-/// Collect all PIDs in the process tree rooted at `root_pid` (BFS via ps output).
-#[cfg(unix)]
-fn collect_process_tree(root_pid: u32) -> Vec<u32> {
-    let output = match std::process::Command::new("ps")
-        .args(["-A", "-o", "pid=,ppid="])
-        .output()
-    {
-        Ok(o) => o,
-        Err(_) => return vec![root_pid],
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let mut children: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
-    for line in stdout.lines() {
-        let mut parts = line.split_whitespace();
-        let pid: u32 = match parts.next().and_then(|s| s.parse().ok()) {
-            Some(p) => p,
-            None => continue,
-        };
-        let ppid: u32 = match parts.next().and_then(|s| s.parse().ok()) {
-            Some(p) => p,
-            None => continue,
-        };
-        children.entry(ppid).or_default().push(pid);
-    }
-
-    let mut result = Vec::new();
-    let mut queue = std::collections::VecDeque::new();
-    queue.push_back(root_pid);
-    while let Some(pid) = queue.pop_front() {
-        result.push(pid);
-        if let Some(kids) = children.get(&pid) {
-            for &kid in kids {
-                queue.push_back(kid);
-            }
-        }
-    }
-    result
-}
-
-#[cfg(unix)]
 #[tauri::command]
-fn kill_session(
-    pid: u32,
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
-    {
-        let remote_guard = state.remote.lock().unwrap();
-        if let Some(ref active) = *remote_guard {
-            return remote::remote_kill_session(&active.base_url, &active.token, pid, false);
-        }
-    }
-
-    let pids = collect_process_tree(pid);
-    log_debug(&format!(
-        "kill_session: SIGTERM to {} pids (root={}): {:?}",
-        pids.len(), pid, pids
-    ));
-
-    // SIGTERM children-first (reverse BFS order), then root
-    for &p in pids.iter().rev() {
-        unsafe { libc::kill(p as libc::pid_t, libc::SIGTERM) };
-    }
-
-    let sessions_arc = state.sessions.clone();
-
-    // Spawn background thread: rescan after 500ms, then SIGKILL survivors after 2s
-    std::thread::spawn(move || {
-        // Rescan so the UI reflects the killed session immediately
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        if let Some(claude_dir) = crate::session::get_claude_dir() {
-            let sessions = crate::session::scan_sessions(&claude_dir);
-            *sessions_arc.lock().unwrap() = sessions.clone();
-            let _ = app.emit("sessions-updated", &sessions);
-            crate::update_tray(&app, &sessions);
-        }
-
-        // SIGKILL any survivors
-        std::thread::sleep(std::time::Duration::from_millis(1500));
-        for &p in pids.iter().rev() {
-            let alive = unsafe { libc::kill(p as libc::pid_t, 0) } == 0;
-            if alive {
-                unsafe { libc::kill(p as libc::pid_t, libc::SIGKILL) };
-            }
-        }
-
-        // Final rescan after SIGKILL
-        if let Some(claude_dir) = crate::session::get_claude_dir() {
-            let sessions = crate::session::scan_sessions(&claude_dir);
-            *sessions_arc.lock().unwrap() = sessions.clone();
-            let _ = app.emit("sessions-updated", &sessions);
-            crate::update_tray(&app, &sessions);
-        }
-    });
-
-    Ok(())
-}
-
-#[cfg(not(unix))]
-#[tauri::command]
-fn kill_session(
-    pid: u32,
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
-    std::process::Command::new("taskkill")
-        .args(["/F", "/T", "/PID", &pid.to_string()])
-        .status()
-        .map_err(|e| format!("taskkill failed: {e}"))?;
-
-    let sessions_arc = state.sessions.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        if let Some(claude_dir) = crate::session::get_claude_dir() {
-            let sessions = crate::session::scan_sessions(&claude_dir);
-            *sessions_arc.lock().unwrap() = sessions.clone();
-            let _ = app.emit("sessions-updated", &sessions);
-            crate::update_tray(&app, &sessions);
-        }
-    });
-
-    Ok(())
+fn kill_session(pid: u32, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.backend.lock().unwrap().kill_pid(pid)
 }
 
 // ── App state ────────────────────────────────────────────────────────────────
 
 pub struct AppState {
-    pub sessions: Arc<Mutex<Vec<SessionInfo>>>,
-    pub viewed_session: Arc<Mutex<Option<String>>>,
-    pub viewed_offset: Arc<Mutex<u64>>,
-    /// Active remote connection, `None` when in local mode.
-    pub remote: Arc<Mutex<Option<ActiveRemote>>>,
-    /// `true` when connected to a remote — used by the local watcher to stay quiet.
-    pub is_remote: Arc<Mutex<bool>>,
+    /// The active backend (local or remote).  Swapped on connect/disconnect.
+    pub backend: Arc<Mutex<Box<dyn Backend>>>,
 }
 
 // ── Tauri commands ───────────────────────────────────────────────────────────
 
 #[tauri::command]
 fn list_sessions(state: tauri::State<AppState>) -> Vec<SessionInfo> {
-    state.sessions.lock().unwrap().clone()
+    state.backend.lock().unwrap().list_sessions()
 }
 
 #[tauri::command]
@@ -370,21 +209,7 @@ fn get_messages(
     jsonl_path: String,
     state: tauri::State<AppState>,
 ) -> Result<Vec<Value>, String> {
-    let remote_guard = state.remote.lock().unwrap();
-    if let Some(ref active) = *remote_guard {
-        // Remote mode: proxy to the probe
-        return remote::remote_get_messages(&active.base_url, &active.token, &jsonl_path);
-    }
-    drop(remote_guard);
-
-    // Local mode: read file directly
-    let content = std::fs::read_to_string(&jsonl_path).map_err(|e| e.to_string())?;
-    let messages: Vec<Value> = content
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| serde_json::from_str(l).ok())
-        .collect();
-    Ok(messages)
+    state.backend.lock().unwrap().get_messages(&jsonl_path)
 }
 
 #[derive(Serialize, Clone)]
@@ -397,28 +222,13 @@ struct SkillInvocation {
 
 #[tauri::command]
 fn get_skill_history(jsonl_path: String, state: tauri::State<AppState>) -> Result<Vec<SkillInvocation>, String> {
-    let content = {
-        let remote_guard = state.remote.lock().unwrap();
-        if let Some(ref active) = *remote_guard {
-            // Remote mode: fetch via messages endpoint, re-serialize to JSONL for parsing
-            let messages = remote::remote_get_messages(&active.base_url, &active.token, &jsonl_path)?;
-            messages.iter()
-                .filter_map(|v| serde_json::to_string(v).ok())
-                .collect::<Vec<_>>()
-                .join("\n")
-        } else {
-            drop(remote_guard);
-            std::fs::read_to_string(&jsonl_path).map_err(|e| e.to_string())?
-        }
-    };
+    let messages = state.backend.lock().unwrap().get_messages(&jsonl_path)?;
+    Ok(extract_skill_history(&messages))
+}
+
+fn extract_skill_history(messages: &[Value]) -> Vec<SkillInvocation> {
     let mut history = Vec::new();
-    for line in content.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Ok(msg) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+    for msg in messages {
         if msg.get("type").and_then(|t| t.as_str()) != Some("assistant") {
             continue;
         }
@@ -457,56 +267,20 @@ fn get_skill_history(jsonl_path: String, state: tauri::State<AppState>) -> Resul
             }
         }
     }
-    Ok(history)
+    history
 }
 
 #[tauri::command]
 fn start_watching_session(
     jsonl_path: String,
-    app: tauri::AppHandle,
     state: tauri::State<AppState>,
 ) -> Result<u64, String> {
-    let remote_guard = state.remote.lock().unwrap();
-    if let Some(ref active) = *remote_guard {
-        // Remote mode: get file size from probe, then start tail poller
-        let file_size = remote::remote_file_size(&active.base_url, &active.token, &jsonl_path);
-        let tail_running = active.tail_running.clone();
-
-        // Reset the flag so the new tail thread starts fresh
-        *tail_running.lock().unwrap() = true;
-
-        remote::start_remote_tail(
-            active.base_url.clone(),
-            active.token.clone(),
-            jsonl_path.clone(),
-            file_size,
-            app,
-            tail_running,
-        );
-
-        *state.viewed_session.lock().unwrap() = Some(jsonl_path);
-        *state.viewed_offset.lock().unwrap() = file_size;
-        return Ok(file_size);
-    }
-    drop(remote_guard);
-
-    // Local mode
-    let file_size = std::fs::metadata(&jsonl_path)
-        .map(|m| m.len())
-        .map_err(|e| e.to_string())?;
-    *state.viewed_session.lock().unwrap() = Some(jsonl_path);
-    *state.viewed_offset.lock().unwrap() = file_size;
-    Ok(file_size)
+    state.backend.lock().unwrap().start_watch(jsonl_path)
 }
 
 #[tauri::command]
 fn stop_watching_session(state: tauri::State<AppState>) {
-    // Stop remote tail poller if running
-    if let Some(ref active) = *state.remote.lock().unwrap() {
-        *active.tail_running.lock().unwrap() = false;
-    }
-    *state.viewed_session.lock().unwrap() = None;
-    *state.viewed_offset.lock().unwrap() = 0;
+    state.backend.lock().unwrap().stop_watch();
 }
 
 // ── CLI installer (macOS only) ───────────────────────────────────────────────
@@ -678,8 +452,10 @@ pub fn update_tray(app: &tauri::AppHandle, sessions: &[SessionInfo]) {
 
     let is_active = |s: &SessionInfo| matches!(
         s.status,
+        SessionStatus::Thinking | SessionStatus::Executing |
         SessionStatus::Streaming | SessionStatus::Processing |
-        SessionStatus::WaitingInput | SessionStatus::Active
+        SessionStatus::WaitingInput | SessionStatus::Active |
+        SessionStatus::Delegating
     );
 
     let main_count = sessions.iter().filter(|s| !s.is_subagent && is_active(s)).count();
@@ -709,18 +485,6 @@ pub fn update_tray(app: &tauri::AppHandle, sessions: &[SessionInfo]) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let sessions: Arc<Mutex<Vec<SessionInfo>>> = Arc::new(Mutex::new(Vec::new()));
-    let viewed_session: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let viewed_offset: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
-    let is_remote: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
-
-    let watcher_state = Arc::new(WatcherState {
-        sessions: sessions.clone(),
-        viewed_session: viewed_session.clone(),
-        viewed_offset: viewed_offset.clone(),
-        is_remote: is_remote.clone(),
-    });
-
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(w) = app.get_webview_window("main") {
@@ -730,22 +494,25 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
-            sessions,
-            viewed_session,
-            viewed_offset,
-            remote: Arc::new(Mutex::new(None)),
-            is_remote,
+            // NullBackend is a placeholder; replaced with LocalBackend in setup().
+            backend: Arc::new(Mutex::new(Box::new(backend::NullBackend) as Box<dyn Backend>)),
         })
         .setup(move |app| {
+            // Replace NullBackend with the real LocalBackend now that AppHandle
+            // is available.
+            {
+                let state = app.state::<AppState>();
+                let local = local_backend::LocalBackend::new(app.handle().clone());
+                *state.backend.lock().unwrap() = Box::new(local);
+            }
+
             // ── Tray icon ────────────────────────────────────────────────────
-            let show_item = MenuItemBuilder::new("Show").id("show").build(app)?;
-            let hide_item = MenuItemBuilder::new("Hide").id("hide").build(app)?;
             let switch_item = MenuItemBuilder::new("Switch Connection").id("switch-connection").build(app)?;
             let sep = tauri::menu::PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItemBuilder::new("Quit").id("quit").build(app)?;
 
             let tray_menu = MenuBuilder::new(app)
-                .items(&[&show_item, &hide_item, &sep, &switch_item, &quit_item])
+                .items(&[&switch_item, &sep, &quit_item])
                 .build()?;
 
             let icon = app.default_window_icon().cloned().unwrap();
@@ -755,17 +522,6 @@ pub fn run() {
                 .menu(&tray_menu)
                 .tooltip("Claude Fleet")
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "show" => {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        }
-                    }
-                    "hide" => {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.hide();
-                        }
-                    }
                     "switch-connection" => {
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = w.show();
@@ -778,27 +534,8 @@ pub fn run() {
                     }
                     _ => {}
                 })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click { .. } = event {
-                        let app = tray.app_handle();
-                        if let Some(w) = app.get_webview_window("main") {
-                            if w.is_visible().unwrap_or(false) {
-                                let _ = w.set_focus();
-                            } else {
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            }
-                        }
-                    }
-                })
                 .build(app)?;
 
-            // ── Background watcher ───────────────────────────────────────────
-            let handle = app.handle().clone();
-            let ws = watcher_state.clone();
-            std::thread::spawn(move || {
-                watcher::run(handle, ws);
-            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

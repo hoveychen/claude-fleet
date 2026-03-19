@@ -47,28 +47,87 @@ fn default_probe_port() -> u16 {
     7007
 }
 
-// ── Runtime state of an active remote connection ──────────────────────────────
+// ── RemoteBackend ─────────────────────────────────────────────────────────────
 
-pub struct ActiveRemote {
-    pub connection: RemoteConnection,
+/// Active remote connection.  Implements [`crate::backend::Backend`] so that
+/// all Tauri command handlers can delegate without if/else branching.
+pub struct RemoteBackend {
+    // Connection metadata (needed for Drop to reach the remote probe).
+    connection: RemoteConnection,
     /// `http://127.0.0.1:<probe_port>`
-    pub base_url: String,
-    pub token: String,
-    /// The local `ssh -N -L …` tunnel child process.
-    pub tunnel_child: std::process::Child,
-    /// PID of the `fleet serve` process on the remote host.
-    pub remote_probe_pid: Option<u32>,
+    base_url: String,
+    token: String,
+    /// Local `ssh -N -L …` tunnel child process.
+    tunnel_child: std::process::Child,
+    /// PID of `fleet serve` on the remote host.
+    remote_probe_pid: Option<u32>,
     /// Set to `false` to stop the sessions-poller thread.
-    pub poller_running: Arc<Mutex<bool>>,
+    poller_running: Arc<Mutex<bool>>,
     /// Set to `false` to stop the tail-poller thread.
-    pub tail_running: Arc<Mutex<bool>>,
+    tail_running: Arc<Mutex<bool>>,
+    // Backend state
+    app: tauri::AppHandle,
+    sessions: Arc<Mutex<Vec<crate::session::SessionInfo>>>,
+    viewed_session: Arc<Mutex<Option<String>>>,
+    viewed_offset: Arc<Mutex<u64>>,
 }
 
-impl Drop for ActiveRemote {
+impl Drop for RemoteBackend {
     fn drop(&mut self) {
         *self.poller_running.lock().unwrap() = false;
         *self.tail_running.lock().unwrap() = false;
         let _ = self.tunnel_child.kill();
+        // Best-effort: kill the remote fleet-serve process.
+        if let Some(pid) = self.remote_probe_pid {
+            let _ = ssh_exec(&self.connection, &format!("kill {} 2>/dev/null", pid));
+        }
+        let _ = ssh_exec(
+            &self.connection,
+            &format!(
+                "pkill -f 'fleet serve --port {}' 2>/dev/null",
+                self.connection.probe_port
+            ),
+        );
+    }
+}
+
+impl crate::backend::Backend for RemoteBackend {
+    fn list_sessions(&self) -> Vec<crate::session::SessionInfo> {
+        self.sessions.lock().unwrap().clone()
+    }
+
+    fn get_messages(&self, path: &str) -> Result<Vec<serde_json::Value>, String> {
+        remote_get_messages(&self.base_url, &self.token, path)
+    }
+
+    fn kill_pid(&self, pid: u32) -> Result<(), String> {
+        remote_kill_session(&self.base_url, &self.token, pid, false)
+    }
+
+    fn account_info(&self) -> Result<crate::account::AccountInfo, String> {
+        remote_get_account_info(&self.base_url, &self.token)
+    }
+
+    fn start_watch(&self, path: String) -> Result<u64, String> {
+        let file_size = remote_file_size(&self.base_url, &self.token, &path);
+        *self.tail_running.lock().unwrap() = true;
+        start_remote_tail(
+            self.base_url.clone(),
+            self.token.clone(),
+            path.clone(),
+            file_size,
+            self.app.clone(),
+            self.tail_running.clone(),
+        );
+        *self.viewed_session.lock().unwrap() = Some(path);
+        *self.viewed_offset.lock().unwrap() = file_size;
+        Ok(file_size)
+    }
+
+    fn stop_watch(&self) {
+        *self.tail_running.lock().unwrap() = false;
+        *self.viewed_session.lock().unwrap() = None;
+        *self.viewed_offset.lock().unwrap() = 0;
     }
 }
 
@@ -374,14 +433,25 @@ pub fn connect_remote(
     app: AppHandle,
     state: tauri::State<crate::AppState>,
 ) -> Result<(), String> {
-    // Clone the Arc handles we need — cheap, just bumps reference counts.
-    let sessions = state.sessions.clone();
-    let remote = state.remote.clone();
-    let is_remote = state.is_remote.clone();
+    let backend_arc = state.backend.clone();
 
     std::thread::spawn(move || {
-        if let Err(e) = connect_remote_impl(conn, &app, sessions, remote, is_remote) {
-            emit_progress(&app, &e, false, Some(&e));
+        match connect_remote_impl(conn, &app) {
+            Ok(remote_backend) => {
+                // Swap backend outside the lock so Drop (which may do SSH) doesn't
+                // block other commands.
+                let old = {
+                    let mut guard = backend_arc.lock().unwrap();
+                    std::mem::replace(
+                        &mut *guard,
+                        Box::new(remote_backend) as Box<dyn crate::backend::Backend>,
+                    )
+                };
+                drop(old);
+            }
+            Err(e) => {
+                emit_progress(&app, &e, false, Some(&e));
+            }
         }
     });
 
@@ -391,10 +461,7 @@ pub fn connect_remote(
 fn connect_remote_impl(
     conn: RemoteConnection,
     app: &AppHandle,
-    sessions: Arc<Mutex<Vec<SessionInfo>>>,
-    remote: Arc<Mutex<Option<ActiveRemote>>>,
-    is_remote: Arc<Mutex<bool>>,
-) -> Result<(), String> {
+) -> Result<RemoteBackend, String> {
     // ── Step 1: verify SSH connectivity + detect remote platform ─────────────
     emit_progress(app, "Connecting via SSH…", false, None);
     ssh_exec(&conn, "echo ok").map_err(|e| {
@@ -536,7 +603,7 @@ fn connect_remote_impl(
             if result.is_ok() {
                 emit_progress_update(app, "Downloading fleet binary… complete.");
                 // Binary is already in place — skip SCP, go straight to probe startup
-                return connect_remote_start_probe(conn, app, sessions, remote, is_remote, remote_uname);
+                return connect_remote_start_probe(conn, app, remote_uname);
             }
             let err = format!(
                 "No bundled binary for {remote_uname} and GitHub download failed.\n\
@@ -556,18 +623,16 @@ fn connect_remote_impl(
         emit_progress(app, "Remote fleet binary up to date.", false, None);
     }
 
-    connect_remote_start_probe(conn, app, sessions, remote, is_remote, remote_uname)
+    connect_remote_start_probe(conn, app, remote_uname)
 }
 
-/// Steps 4–7: start probe, tunnel, health-check, poller.
+/// Steps 4–7: start probe, tunnel, health-check, poller.  Returns the fully
+/// connected `RemoteBackend` on success.
 fn connect_remote_start_probe(
     conn: RemoteConnection,
     app: &AppHandle,
-    sessions: Arc<Mutex<Vec<SessionInfo>>>,
-    remote: Arc<Mutex<Option<ActiveRemote>>>,
-    is_remote: Arc<Mutex<bool>>,
     remote_uname: String,
-) -> Result<(), String> {
+) -> Result<RemoteBackend, String> {
     // ── Step 4: start remote probe ───────────────────────────────────────────
     emit_progress(app, "Starting remote fleet probe…", false, None);
     let token = generate_token();
@@ -674,26 +739,37 @@ fn connect_remote_start_probe(
     }
     let _ = save_connections(&saved);
 
+    // Sessions cache owned by this RemoteBackend instance.
+    let sessions: Arc<Mutex<Vec<SessionInfo>>> = Arc::new(Mutex::new(Vec::new()));
     let poller_running = Arc::new(Mutex::new(true));
     let tail_running = Arc::new(Mutex::new(true));
 
+    // Do an initial synchronous fetch so list_sessions() is populated immediately.
     {
-        let active = ActiveRemote {
-            connection: conn.clone(),
-            base_url: base_url.clone(),
-            token: token.clone(),
-            tunnel_child,
-            remote_probe_pid,
-            poller_running: poller_running.clone(),
-            tail_running: tail_running.clone(),
-        };
-        *remote.lock().unwrap() = Some(active);
-        *is_remote.lock().unwrap() = true;
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        if let Ok(resp) = client
+            .get(&format!("{}/sessions", base_url))
+            .header("Authorization", &auth_header)
+            .send()
+        {
+            if let Ok(body) = resp.text() {
+                if let Ok(s) = serde_json::from_str::<Vec<SessionInfo>>(&body) {
+                    *sessions.lock().unwrap() = s.clone();
+                    let _ = app.emit("sessions-updated", &s);
+                    crate::update_tray(app, &s);
+                }
+            }
+        }
     }
 
+    // Start background poller for continuous session updates.
     {
         let app2 = app.clone();
         let pr = poller_running.clone();
+        let sess2 = sessions.clone();
         let poll_url = format!("{}/sessions", base_url);
         let poll_auth = format!("Bearer {}", token);
 
@@ -714,7 +790,7 @@ fn connect_remote_start_probe(
                         if body != last_json {
                             last_json = body.clone();
                             if let Ok(s) = serde_json::from_str::<Vec<SessionInfo>>(&body) {
-                                *sessions.lock().unwrap() = s.clone();
+                                *sess2.lock().unwrap() = s.clone();
                                 let _ = app2.emit("sessions-updated", &s);
                                 crate::update_tray(&app2, &s);
                             }
@@ -731,7 +807,20 @@ fn connect_remote_start_probe(
         format!("{}@{}", conn.username, conn.host)
     };
     emit_progress(app, &format!("Connected to {label} ({remote_uname})"), true, None);
-    Ok(())
+
+    Ok(RemoteBackend {
+        connection: conn,
+        base_url,
+        token,
+        tunnel_child,
+        remote_probe_pid,
+        poller_running,
+        tail_running,
+        app: app.clone(),
+        sessions,
+        viewed_session: Arc::new(Mutex::new(None)),
+        viewed_offset: Arc::new(Mutex::new(0)),
+    })
 }
 
 // ── Disconnect ────────────────────────────────────────────────────────────────
@@ -741,41 +830,19 @@ pub fn disconnect_remote(
     state: tauri::State<crate::AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let mut remote_guard = state.remote.lock().unwrap();
-    if let Some(active) = remote_guard.take() {
-        // Stop background threads
-        *active.poller_running.lock().unwrap() = false;
-        *active.tail_running.lock().unwrap() = false;
-
-        // Kill the SSH tunnel (Drop would also do this, but be explicit)
-        let conn = active.connection.clone();
-        let probe_pid = active.remote_probe_pid;
-        drop(active); // kills tunnel child via Drop
-
-        // Kill the remote probe process
-        if let Some(pid) = probe_pid {
-            let _ = ssh_exec(&conn, &format!("kill {} 2>/dev/null", pid));
-        }
-        // Also try pkill by name as a fallback
-        let _ = ssh_exec(
-            &conn,
-            &format!(
-                "pkill -f 'fleet serve --port {}' 2>/dev/null",
-                conn.probe_port
-            ),
-        );
-    }
-
-    *state.is_remote.lock().unwrap() = false;
-
-    // Trigger a local rescan so the UI reflects local sessions again
-    if let Some(claude_dir) = crate::session::get_claude_dir() {
-        let sessions = crate::session::scan_sessions(&claude_dir);
-        *state.sessions.lock().unwrap() = sessions.clone();
-        let _ = app.emit("sessions-updated", &sessions);
-        crate::update_tray(&app, &sessions);
-    }
-
+    // Construct the new LocalBackend first (triggers initial local scan and
+    // emits sessions-updated) before dropping the RemoteBackend.
+    let new_backend = crate::local_backend::LocalBackend::new(app);
+    // Swap: drop old backend (RemoteBackend::Drop kills tunnel + remote probe)
+    // outside the lock so the SSH cleanup doesn't block other commands.
+    let old = {
+        let mut guard = state.backend.lock().unwrap();
+        std::mem::replace(
+            &mut *guard,
+            Box::new(new_backend) as Box<dyn crate::backend::Backend>,
+        )
+    };
+    drop(old);
     Ok(())
 }
 

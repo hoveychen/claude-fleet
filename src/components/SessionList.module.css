@@ -31,6 +31,23 @@
   padding: 0 10px 8px;
 }
 
+.switch_btn {
+  padding: 3px 6px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--color-text-dim);
+  font-size: 13px;
+  line-height: 1;
+  transition: background 0.1s, color 0.1s;
+}
+
+.switch_btn:hover {
+  background: var(--color-bg-card-hover);
+  color: var(--color-text);
+}
+
 .view_toggle {
   display: flex;
   background: var(--color-bg-secondary);

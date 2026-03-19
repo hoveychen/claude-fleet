@@ -2,7 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useDetailStore, useSessionsStore, useUIStore } from "../store";
+import { useConnectionStore, useDetailStore, useSessionsStore, useUIStore } from "../store";
 import type { SessionInfo } from "../types";
 import { AccountInfo } from "./AccountInfo";
 import { GalleryView } from "./GalleryView";
@@ -30,6 +30,7 @@ export function SessionList() {
   const { sessions, refresh, setSessions } = useSessionsStore();
   const { session: viewedSession, open } = useDetailStore();
   const { viewMode, setViewMode } = useUIStore();
+  const { connection, disconnect } = useConnectionStore();
   const [filter, setFilter] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState(getSavedWidth);
   const [isDragging, setIsDragging] = useState(false);
@@ -174,6 +175,16 @@ export function SessionList() {
         <div className={styles.controls}>
           <ThemeToggle />
           <LanguageSwitcher />
+          <button
+            className={styles.switch_btn}
+            onClick={async () => {
+              await useDetailStore.getState().close();
+              await disconnect();
+            }}
+            title={t("switch_connection")}
+          >
+            {connection?.type === "remote" ? "⇄" : "💻"}
+          </button>
           <div className={styles.view_toggle} data-wizard="view-toggle">
             <button
               className={`${styles.view_btn} ${viewMode === "list" ? styles.view_active : ""}`}

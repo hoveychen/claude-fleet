@@ -2,19 +2,18 @@ import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
 import "./App.css";
 import { ConnectionDialog } from "./components/ConnectionDialog";
-import type { RemoteConnection } from "./components/ConnectionDialog";
 import { Onboarding } from "./components/Onboarding";
 import { SessionDetail } from "./components/SessionDetail";
 import { SessionList } from "./components/SessionList";
 import { Wizard } from "./components/Wizard";
-import { resolveTheme, useConnectionStore, useDetailStore, useUIStore } from "./store";
+import { type Connection, resolveTheme, useConnectionStore, useDetailStore, useUIStore } from "./store";
 
 const ONBOARDING_DISMISSED_KEY = "onboarding-dismissed";
 const WIZARD_COMPLETED_KEY = "wizard-completed";
 
 function App() {
   const { theme, viewMode } = useUIStore();
-  const { connected, setConnected, disconnect } = useConnectionStore();
+  const { connection, setConnection, disconnect } = useConnectionStore();
 
   const [showOnboarding, setShowOnboarding] = useState(() => {
     return !localStorage.getItem(ONBOARDING_DISMISSED_KEY);
@@ -45,10 +44,10 @@ function App() {
   }, [theme]);
 
   const handleConnected = useCallback(
-    (remote: RemoteConnection | null) => {
-      setConnected(remote);
+    (conn: Connection) => {
+      setConnection(conn);
     },
-    [setConnected]
+    [setConnection]
   );
 
   const finishOnboarding = useCallback(() => {
@@ -65,7 +64,7 @@ function App() {
   }, []);
 
   // Show connection dialog until the user picks local or remote
-  if (!connected) {
+  if (!connection) {
     return (
       <div className="app">
         <ConnectionDialog onConnected={handleConnected} />

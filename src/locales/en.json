@@ -30,6 +30,7 @@
     "system": "System"
   },
   "language": "Language",
+  "switch_connection": "Switch Connection",
   "view_list": "List",
   "view_gallery": "Gallery",
   "gallery_show_all": "Show All",
