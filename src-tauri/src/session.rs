@@ -227,19 +227,10 @@ fn determine_status(last_lines: &[Value], file_age_secs: f64) -> SessionStatus {
         let last_type = last.get("type").and_then(|t| t.as_str());
 
         if last_type == Some("user") {
-            // Last write was a user message — check if it contains tool_result blocks.
-            // If so, the tool just finished and the model is now thinking about the result.
-            let has_tool_result = last
-                .get("message")
-                .and_then(|m| m.get("content"))
-                .and_then(|c| c.as_array())
-                .map_or(false, |blocks| {
-                    blocks.iter().any(|b| {
-                        b.get("type").and_then(|t| t.as_str()) == Some("tool_result")
-                    })
-                });
-
-            if has_tool_result && file_age_secs < 120.0 {
+            // Last write was a user message — the model is thinking about it.
+            // This covers both: tool_result received (model thinking after tool execution)
+            // and fresh user message (model doing initial/extended thinking before first write).
+            if file_age_secs < 120.0 {
                 return SessionStatus::Thinking;
             }
         }
