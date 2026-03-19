@@ -19,7 +19,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::session::SessionInfo;
 
@@ -34,6 +34,10 @@ pub struct RemoteConnection {
     pub port: u16,
     pub username: String,
     pub identity_file: Option<String>,
+    /// Optional jump/bastion host (SSH ProxyJump, e.g. "user@bastion:22").
+    pub jump_host: Option<String>,
+    /// If set, use this SSH config profile name instead of manual host/user/port/key.
+    pub ssh_profile: Option<String>,
     /// Local port that will be forwarded via the SSH tunnel.
     #[serde(default = "default_probe_port")]
     pub probe_port: u16,
@@ -137,15 +141,88 @@ fn base_ssh_args(conn: &RemoteConnection) -> Vec<String> {
         "ConnectTimeout=15".to_string(),
         "-o".to_string(),
         "BatchMode=yes".to_string(),
-        "-p".to_string(),
-        conn.port.to_string(),
     ];
-    if let Some(ref key) = conn.identity_file {
-        args.push("-i".to_string());
-        args.push(key.clone());
+    if let Some(ref profile) = conn.ssh_profile {
+        // Use SSH config profile directly — the profile resolves host/user/port/key
+        args.push(profile.clone());
+    } else {
+        args.push("-p".to_string());
+        args.push(conn.port.to_string());
+        if let Some(ref key) = conn.identity_file {
+            args.push("-i".to_string());
+            args.push(key.clone());
+        }
+        if let Some(ref jump) = conn.jump_host {
+            args.push("-J".to_string());
+            args.push(jump.clone());
+        }
+        args.push(format!("{}@{}", conn.username, conn.host));
     }
-    args.push(format!("{}@{}", conn.username, conn.host));
     args
+}
+
+/// Build SCP arguments targeting the remote host.
+fn base_scp_args(conn: &RemoteConnection) -> Vec<String> {
+    let mut args = vec![
+        "-o".to_string(),
+        "StrictHostKeyChecking=accept-new".to_string(),
+        "-o".to_string(),
+        "ConnectTimeout=30".to_string(),
+    ];
+    if conn.ssh_profile.is_none() {
+        args.push("-P".to_string());
+        args.push(conn.port.to_string());
+        if let Some(ref key) = conn.identity_file {
+            args.push("-i".to_string());
+            args.push(key.clone());
+        }
+        if let Some(ref jump) = conn.jump_host {
+            args.push("-J".to_string());
+            args.push(jump.clone());
+        }
+    }
+    args
+}
+
+/// Returns the SCP target prefix "user@host" or "profile".
+fn scp_target(conn: &RemoteConnection) -> String {
+    if let Some(ref profile) = conn.ssh_profile {
+        profile.clone()
+    } else {
+        format!("{}@{}", conn.username, conn.host)
+    }
+}
+
+/// List SSH config profile (Host) names from ~/.ssh/config.
+#[tauri::command]
+pub fn list_ssh_profiles() -> Vec<String> {
+    let Some(config_path) = dirs::home_dir().map(|h| h.join(".ssh").join("config")) else {
+        return vec![];
+    };
+    let Ok(content) = std::fs::read_to_string(&config_path) else {
+        return vec![];
+    };
+    let mut profiles = vec![];
+    for line in content.lines() {
+        // Strip inline comments first, then trim whitespace
+        let bare = line.splitn(2, '#').next().unwrap_or("").trim();
+        if bare.is_empty() {
+            continue;
+        }
+        // Case-insensitive "Host" keyword (SSH config is case-insensitive for keywords)
+        let lower = bare.to_ascii_lowercase();
+        if let Some(_) = lower.strip_prefix("host ") {
+            // Use original (non-lowercased) chars for the actual host names
+            let offset = "host ".len();
+            for host in bare[offset..].split_whitespace() {
+                // Skip wildcard patterns — they are not selectable profiles
+                if !host.contains('*') && !host.contains('?') {
+                    profiles.push(host.to_string());
+                }
+            }
+        }
+    }
+    profiles
 }
 
 /// Run an SSH command on the remote host and return (stdout, stderr, success).
@@ -164,6 +241,13 @@ fn ssh_exec(conn: &RemoteConnection, remote_cmd: &str) -> Result<String, String>
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         Err(stderr)
     }
+}
+
+/// Find a platform-specific binary bundled as a Tauri resource, e.g. "fleet-linux-x64".
+fn find_bundled_fleet_binary(app: &AppHandle, suffix: &str) -> Option<PathBuf> {
+    let resource_dir = app.path().resource_dir().ok()?;
+    let path = resource_dir.join(format!("fleet-{suffix}"));
+    if path.exists() { Some(path) } else { None }
 }
 
 /// Find the local fleet binary: sidecar next to app exe, then PATH.
@@ -210,21 +294,63 @@ fn generate_token() -> String {
 
 // ── Core connect logic ────────────────────────────────────────────────────────
 
+/// Tauri command — returns immediately so the UI stays responsive.
+/// All progress (including errors) is reported via `remote-connect-progress` events.
 #[tauri::command]
 pub fn connect_remote(
     conn: RemoteConnection,
     app: AppHandle,
     state: tauri::State<crate::AppState>,
 ) -> Result<(), String> {
-    // ── Step 1: verify SSH connectivity ──────────────────────────────────────
-    emit_progress(&app, "Connecting via SSH…", false, None);
+    // Clone the Arc handles we need — cheap, just bumps reference counts.
+    let sessions = state.sessions.clone();
+    let remote = state.remote.clone();
+    let is_remote = state.is_remote.clone();
+
+    std::thread::spawn(move || {
+        if let Err(e) = connect_remote_impl(conn, &app, sessions, remote, is_remote) {
+            emit_progress(&app, &e, false, Some(&e));
+        }
+    });
+
+    Ok(()) // ← returns before SSH even starts; progress events drive the UI
+}
+
+fn connect_remote_impl(
+    conn: RemoteConnection,
+    app: &AppHandle,
+    sessions: Arc<Mutex<Vec<SessionInfo>>>,
+    remote: Arc<Mutex<Option<ActiveRemote>>>,
+    is_remote: Arc<Mutex<bool>>,
+) -> Result<(), String> {
+    // ── Step 1: verify SSH connectivity + detect remote platform ─────────────
+    emit_progress(app, "Connecting via SSH…", false, None);
     ssh_exec(&conn, "echo ok").map_err(|e| {
-        emit_progress(&app, "SSH connection failed", false, Some(&e));
+        emit_progress(app, "SSH connection failed", false, Some(&e));
         e
     })?;
 
+    // Detect remote OS/arch so we upload the correct binary
+    let remote_uname = ssh_exec(&conn, "uname -sm")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    // Map to GitHub release artifact suffix, e.g. "linux-x64"
+    let release_suffix: Option<&str> = if remote_uname.contains("Linux") {
+        if remote_uname.contains("x86_64") {
+            Some("linux-x64")
+        } else if remote_uname.contains("aarch64") || remote_uname.contains("arm64") {
+            Some("linux-arm64")
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // ── Step 2: check remote version ─────────────────────────────────────────
-    emit_progress(&app, "Checking remote fleet version…", false, None);
+    emit_progress(app, "Checking remote fleet version…", false, None);
     let current_version = env!("CARGO_PKG_VERSION");
     let remote_ver_out = ssh_exec(
         &conn,
@@ -232,68 +358,135 @@ pub fn connect_remote(
     )
     .unwrap_or_else(|_| "NOT_FOUND".to_string());
 
-    let needs_upload = remote_ver_out.contains("NOT_FOUND")
+    let needs_install = remote_ver_out.contains("NOT_FOUND")
         || !remote_ver_out.contains(current_version);
 
-    // ── Step 3: upload binary if needed ──────────────────────────────────────
-    if needs_upload {
-        emit_progress(&app, "Uploading fleet binary to remote…", false, None);
-        let local_bin = find_local_fleet_binary()
-            .ok_or_else(|| "Cannot find local fleet binary to upload".to_string())?;
-
-        // Ensure remote directory exists
+    // ── Step 3: install probe binary on remote ────────────────────────────────
+    if needs_install {
         ssh_exec(&conn, "mkdir -p ~/.fleet-probe").map_err(|e| {
-            emit_progress(&app, "Failed to create remote directory", false, Some(&e));
+            emit_progress(app, "Failed to create remote directory", false, Some(&e));
             e
         })?;
 
-        // SCP upload
-        let mut scp_args: Vec<String> = vec![
-            "-o".to_string(),
-            "StrictHostKeyChecking=accept-new".to_string(),
-            "-o".to_string(),
-            "ConnectTimeout=30".to_string(),
-            "-P".to_string(),
-            conn.port.to_string(),
-        ];
-        if let Some(ref key) = conn.identity_file {
-            scp_args.push("-i".to_string());
-            scp_args.push(key.clone());
+        // Returns true if the locally-running app's native binary matches the remote platform.
+        fn local_matches_remote(remote_uname: &str) -> bool {
+            let os = std::env::consts::OS;
+            let arch = std::env::consts::ARCH;
+            match (os, arch) {
+                ("macos",   "aarch64") => remote_uname.contains("Darwin") && remote_uname.contains("arm64"),
+                ("macos",   "x86_64")  => remote_uname.contains("Darwin") && remote_uname.contains("x86_64"),
+                ("linux",   "x86_64")  => remote_uname.contains("Linux")  && remote_uname.contains("x86_64"),
+                ("linux",   "aarch64") => remote_uname.contains("Linux")  && (remote_uname.contains("aarch64") || remote_uname.contains("arm64")),
+                ("windows", "x86_64")  => remote_uname.contains("Windows") && remote_uname.contains("x86_64"),
+                ("windows", "aarch64") => remote_uname.contains("Windows") && remote_uname.contains("aarch64"),
+                _ => false,
+            }
         }
-        scp_args.push(local_bin.to_string_lossy().to_string());
-        scp_args.push(format!(
-            "{}@{}:{}",
-            conn.username,
-            conn.host,
-            remote_fleet_path()
-        ));
 
-        let scp_out = std::process::Command::new("scp")
-            .args(&scp_args)
-            .output()
-            .map_err(|e| format!("scp failed: {e}"))?;
+        // Priority 1: local native CLI (same OS+arch — e.g. macOS→macOS, Linux→Linux)
+        // Priority 2: bundled cross-platform CLI (e.g. fleet-linux-x64 inside the app)
+        // Priority 3: download from latest GitHub release on the remote (needs internet)
+        // Priority 4: error
+        let upload_bin: Option<PathBuf> = if local_matches_remote(&remote_uname) {
+            find_local_fleet_binary()
+        } else {
+            release_suffix.and_then(|s| find_bundled_fleet_binary(app, s))
+        };
 
-        if !scp_out.status.success() {
-            let err = String::from_utf8_lossy(&scp_out.stderr).to_string();
-            emit_progress(&app, "Binary upload failed", false, Some(&err));
+        if let Some(bin) = upload_bin {
+            let file_size = std::fs::metadata(&bin).map(|m| m.len()).unwrap_or(0);
+            let size_str = if file_size > 1_048_576 {
+                format!("{:.1} MB", file_size as f64 / 1_048_576.0)
+            } else {
+                format!("{} KB", file_size / 1024)
+            };
+            emit_progress(
+                app,
+                &format!("Uploading fleet binary for {remote_uname} ({size_str})…"),
+                false,
+                None,
+            );
+
+            let mut scp_args = base_scp_args(&conn);
+            scp_args.push(bin.to_string_lossy().to_string());
+            scp_args.push(format!("{}:{}", scp_target(&conn), remote_fleet_path()));
+
+            let scp_out = std::process::Command::new("scp")
+                .args(&scp_args)
+                .output()
+                .map_err(|e| format!("scp failed: {e}"))?;
+
+            if !scp_out.status.success() {
+                let err = String::from_utf8_lossy(&scp_out.stderr).to_string();
+                emit_progress(app, "Binary upload failed", false, Some(&err));
+                return Err(err);
+            }
+
+            ssh_exec(&conn, &format!("chmod +x {}", remote_fleet_path())).map_err(|e| {
+                emit_progress(app, "chmod failed", false, Some(&e));
+                e
+            })?;
+
+            emit_progress(app, "Fleet binary ready.", false, None);
+        } else if let Some(suffix) = release_suffix {
+            // Priority 3: download directly on the remote
+            let dl_url = format!(
+                "https://github.com/hoveychen/claude-fleet/releases/latest/download/fleet-{suffix}"
+            );
+            emit_progress(
+                app,
+                &format!("Downloading fleet binary for {remote_uname} from GitHub releases…"),
+                false,
+                None,
+            );
+            let dl_cmd = format!(
+                r#"curl -fsSL "{url}" -o {bin} && chmod +x {bin} && echo ok"#,
+                url = dl_url,
+                bin = remote_fleet_path(),
+            );
+            if ssh_exec(&conn, &dl_cmd)
+                .map(|out| out.trim() == "ok")
+                .unwrap_or(false)
+            {
+                emit_progress(app, "Download complete.", false, None);
+                // Binary is already in place — skip SCP, go straight to probe startup
+                return connect_remote_start_probe(conn, app, sessions, remote, is_remote, remote_uname);
+            }
+            let err = format!(
+                "No bundled binary for {remote_uname} and GitHub download failed.\n\
+                 Run build-local.sh to include the bundled Linux probe binary."
+            );
+            emit_progress(app, &err, false, Some(&err));
             return Err(err);
-        }
-
-        // Make executable
-        ssh_exec(&conn, &format!("chmod +x {}", remote_fleet_path())).map_err(|e| {
-            emit_progress(&app, "chmod failed", false, Some(&e));
-            e
-        })?;
+        } else {
+            let err = format!(
+                "Unsupported remote platform: {remote_uname}.\n\
+                 No matching binary available (local, bundled, or downloadable)."
+            );
+            emit_progress(app, &err, false, Some(&err));
+            return Err(err);
+        };
     } else {
-        emit_progress(&app, "Remote fleet binary up to date, skipping upload.", false, None);
+        emit_progress(app, "Remote fleet binary up to date.", false, None);
     }
 
+    connect_remote_start_probe(conn, app, sessions, remote, is_remote, remote_uname)
+}
+
+/// Steps 4–7: start probe, tunnel, health-check, poller.
+fn connect_remote_start_probe(
+    conn: RemoteConnection,
+    app: &AppHandle,
+    sessions: Arc<Mutex<Vec<SessionInfo>>>,
+    remote: Arc<Mutex<Option<ActiveRemote>>>,
+    is_remote: Arc<Mutex<bool>>,
+    remote_uname: String,
+) -> Result<(), String> {
     // ── Step 4: start remote probe ───────────────────────────────────────────
-    emit_progress(&app, "Starting remote fleet probe…", false, None);
+    emit_progress(app, "Starting remote fleet probe…", false, None);
     let token = generate_token();
     let probe_port = conn.probe_port;
 
-    // Kill any stale probe on the same port before starting
     let _ = ssh_exec(
         &conn,
         &format!(
@@ -303,40 +496,46 @@ pub fn connect_remote(
     );
 
     let start_cmd = format!(
-        "nohup {} serve --port {} --token {} >/tmp/fleet-probe.log 2>&1 & echo $!",
-        remote_fleet_path(),
-        probe_port,
-        token
+        r#"( setsid {bin} serve --port {port} --token {tok} >/tmp/fleet-probe.log 2>&1 </dev/null & echo $! ) 2>/dev/null || ( nohup {bin} serve --port {port} --token {tok} >/tmp/fleet-probe.log 2>&1 </dev/null & echo $! )"#,
+        bin = remote_fleet_path(),
+        port = probe_port,
+        tok = token,
     );
     let pid_str = ssh_exec(&conn, &start_cmd).map_err(|e| {
-        emit_progress(&app, "Failed to start remote probe", false, Some(&e));
+        emit_progress(app, "Failed to start remote probe", false, Some(&e));
         e
     })?;
     let remote_probe_pid: Option<u32> = pid_str.trim().parse().ok();
 
+    std::thread::sleep(Duration::from_millis(500));
+
     // ── Step 5: start local SSH tunnel ───────────────────────────────────────
-    emit_progress(&app, "Creating SSH tunnel…", false, None);
+    emit_progress(app, "Creating SSH tunnel…", false, None);
 
     let mut tunnel_args: Vec<String> = vec![
         "-N".to_string(),
         "-L".to_string(),
         format!("{}:127.0.0.1:{}", probe_port, probe_port),
-        "-o".to_string(),
-        "StrictHostKeyChecking=accept-new".to_string(),
-        "-o".to_string(),
-        "ConnectTimeout=15".to_string(),
-        "-o".to_string(),
-        "ServerAliveInterval=30".to_string(),
-        "-o".to_string(),
-        "ExitOnForwardFailure=yes".to_string(),
-        "-p".to_string(),
-        conn.port.to_string(),
+        "-o".to_string(), "StrictHostKeyChecking=accept-new".to_string(),
+        "-o".to_string(), "ConnectTimeout=15".to_string(),
+        "-o".to_string(), "ServerAliveInterval=30".to_string(),
+        "-o".to_string(), "ExitOnForwardFailure=yes".to_string(),
     ];
-    if let Some(ref key) = conn.identity_file {
-        tunnel_args.push("-i".to_string());
-        tunnel_args.push(key.clone());
+    if let Some(ref profile) = conn.ssh_profile {
+        tunnel_args.push(profile.clone());
+    } else {
+        tunnel_args.push("-p".to_string());
+        tunnel_args.push(conn.port.to_string());
+        if let Some(ref key) = conn.identity_file {
+            tunnel_args.push("-i".to_string());
+            tunnel_args.push(key.clone());
+        }
+        if let Some(ref jump) = conn.jump_host {
+            tunnel_args.push("-J".to_string());
+            tunnel_args.push(jump.clone());
+        }
+        tunnel_args.push(format!("{}@{}", conn.username, conn.host));
     }
-    tunnel_args.push(format!("{}@{}", conn.username, conn.host));
 
     let tunnel_child = std::process::Command::new("ssh")
         .args(&tunnel_args)
@@ -346,7 +545,7 @@ pub fn connect_remote(
         .map_err(|e| format!("Failed to start SSH tunnel: {e}"))?;
 
     // ── Step 6: wait for probe to be ready ───────────────────────────────────
-    emit_progress(&app, "Waiting for probe to be ready…", false, None);
+    emit_progress(app, "Waiting for probe to be ready…", false, None);
     let base_url = format!("http://127.0.0.1:{}", probe_port);
     let health_url = format!("{}/health", base_url);
     let auth_header = format!("Bearer {}", token);
@@ -369,16 +568,18 @@ pub fn connect_remote(
     });
 
     if !ready {
-        // Clean up tunnel
         let mut tc = tunnel_child;
         let _ = tc.kill();
-        let err = "Probe did not become ready within 10 seconds";
-        emit_progress(&app, err, false, Some(err));
-        return Err(err.to_string());
+        let probe_log = ssh_exec(&conn, "tail -20 /tmp/fleet-probe.log 2>/dev/null")
+            .unwrap_or_else(|_| "(could not read probe log)".to_string());
+        let err = format!(
+            "Probe did not become ready within 10 seconds.\nProbe log:\n{probe_log}"
+        );
+        emit_progress(app, &err, false, Some(&err));
+        return Err(err);
     }
 
     // ── Step 7: save connection & start background poller ────────────────────
-    // Persist the connection (upsert by id)
     let mut saved = load_saved_connections();
     if let Some(existing) = saved.iter_mut().find(|c| c.id == conn.id) {
         *existing = conn.clone();
@@ -390,7 +591,6 @@ pub fn connect_remote(
     let poller_running = Arc::new(Mutex::new(true));
     let tail_running = Arc::new(Mutex::new(true));
 
-    // Set remote mode in AppState
     {
         let active = ActiveRemote {
             connection: conn.clone(),
@@ -401,13 +601,11 @@ pub fn connect_remote(
             poller_running: poller_running.clone(),
             tail_running: tail_running.clone(),
         };
-        *state.remote.lock().unwrap() = Some(active);
-        *state.is_remote.lock().unwrap() = true;
+        *remote.lock().unwrap() = Some(active);
+        *is_remote.lock().unwrap() = true;
     }
 
-    // Spawn sessions-poller thread
     {
-        let sessions_arc = state.sessions.clone();
         let app2 = app.clone();
         let pr = poller_running.clone();
         let poll_url = format!("{}/sessions", base_url);
@@ -418,9 +616,7 @@ pub fn connect_remote(
                 .timeout(Duration::from_secs(5))
                 .build()
                 .unwrap();
-
             let mut last_json = String::new();
-
             while *pr.lock().unwrap() {
                 std::thread::sleep(Duration::from_secs(1));
                 if let Ok(resp) = client
@@ -431,12 +627,10 @@ pub fn connect_remote(
                     if let Ok(body) = resp.text() {
                         if body != last_json {
                             last_json = body.clone();
-                            if let Ok(sessions) =
-                                serde_json::from_str::<Vec<SessionInfo>>(&body)
-                            {
-                                *sessions_arc.lock().unwrap() = sessions.clone();
-                                let _ = app2.emit("sessions-updated", &sessions);
-                                crate::update_tray(&app2, &sessions);
+                            if let Ok(s) = serde_json::from_str::<Vec<SessionInfo>>(&body) {
+                                *sessions.lock().unwrap() = s.clone();
+                                let _ = app2.emit("sessions-updated", &s);
+                                crate::update_tray(&app2, &s);
                             }
                         }
                     }
@@ -445,12 +639,12 @@ pub fn connect_remote(
         });
     }
 
-    emit_progress(
-        &app,
-        &format!("Connected to {}@{}", conn.username, conn.host),
-        true,
-        None,
-    );
+    let label = if let Some(ref p) = conn.ssh_profile {
+        p.clone()
+    } else {
+        format!("{}@{}", conn.username, conn.host)
+    };
+    emit_progress(app, &format!("Connected to {label} ({remote_uname})"), true, None);
     Ok(())
 }
 

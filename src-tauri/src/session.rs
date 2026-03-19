@@ -549,10 +549,9 @@ pub fn scan_sessions(claude_dir: &Path) -> Vec<SessionInfo> {
 
         let ws_name = workspace_name(&workspace_path);
         let ide_name = ide.map(|s| s.ide_name.clone());
-        // PID: prefer IDE lock file; fall back to CLI process scan by cwd
-        let session_pid = ide
-            .map(|s| s.pid)
-            .or_else(|| cli_processes.get(&workspace_path).copied());
+        // PID: use Claude CLI process only (not the IDE PID — killing the IDE PID would
+        // terminate the editor itself, not just the Claude session).
+        let session_pid = cli_processes.get(&workspace_path).copied();
 
         let Ok(entries) = fs::read_dir(&workspace_dir) else {
             continue;

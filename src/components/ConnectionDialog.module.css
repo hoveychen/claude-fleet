@@ -164,6 +164,40 @@
   background: var(--color-error-bg);
 }
 
+/* ── connection type toggle (manual / SSH profile) ───────────────────────── */
+.connTypeTabs {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.connTypeTab {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--color-bg-secondary);
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.connTypeTab + .connTypeTab {
+  border-left: 1px solid var(--color-border);
+}
+
+.connTypeTab:hover {
+  color: var(--color-text);
+}
+
+.connTypeTab.connTypeActive {
+  background: var(--color-accent);
+  color: #fff;
+}
+
 /* ── new-connection form ──────────────────────────────────────────────────── */
 .form {
   display: flex;

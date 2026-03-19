@@ -10,8 +10,80 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── Pre-build: Linux x86_64 fleet-cli probe (bundled into every app package) ─
+  # Built once, shared across all platform builds so each bundle can SCP the
+  # correct Linux binary to remote servers without needing internet on the remote.
+  linux-x64-probe:
+    name: Build Linux x86_64 probe binary
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" src-tauri/Cargo.toml
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build fleet-cli for Linux x86_64
+        run: |
+          cargo build --release --bin fleet-cli \
+            --manifest-path src-tauri/Cargo.toml \
+            --target x86_64-unknown-linux-gnu
+
+      - name: Upload probe binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: fleet-linux-x64-probe
+          path: src-tauri/target/x86_64-unknown-linux-gnu/release/fleet-cli
+
+  linux-arm64-probe:
+    name: Build Linux ARM64 probe binary
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" src-tauri/Cargo.toml
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build fleet-cli for Linux ARM64
+        run: |
+          cargo build --release --bin fleet-cli \
+            --manifest-path src-tauri/Cargo.toml \
+            --target aarch64-unknown-linux-gnu
+
+      - name: Upload probe binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: fleet-linux-arm64-probe
+          path: src-tauri/target/aarch64-unknown-linux-gnu/release/fleet-cli
+
   # ── Build all platforms (macOS: sign only, notarization handled separately) ─
   build:
+    needs: [linux-x64-probe, linux-arm64-probe]
     name: Build — ${{ matrix.name }}
     strategy:
       fail-fast: false
@@ -64,6 +136,33 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set version from tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i.bak "s/^version = \".*\"/version = \"${VERSION}\"/" src-tauri/Cargo.toml
+          rm -f src-tauri/Cargo.toml.bak
+
+      - name: Download Linux x64 probe
+        uses: actions/download-artifact@v4
+        with:
+          name: fleet-linux-x64-probe
+          path: /tmp/probe-x64
+
+      - name: Download Linux arm64 probe
+        uses: actions/download-artifact@v4
+        with:
+          name: fleet-linux-arm64-probe
+          path: /tmp/probe-arm64
+
+      - name: Place probe binaries into resources
+        shell: bash
+        run: |
+          mkdir -p src-tauri/resources
+          cp /tmp/probe-x64/fleet-cli src-tauri/resources/fleet-linux-x64
+          cp /tmp/probe-arm64/fleet-cli src-tauri/resources/fleet-linux-arm64
+          chmod +x src-tauri/resources/fleet-linux-x64 src-tauri/resources/fleet-linux-arm64
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

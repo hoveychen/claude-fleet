@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Claude Fleet",
-  "version": "0.1.0",
   "identifier": "com.hoveychen.claude-fleet",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -34,6 +33,7 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/fleet"],
+    "resources": ["resources/*"],
     "macOS": {
       "minimumSystemVersion": "10.15",
       "entitlements": null,

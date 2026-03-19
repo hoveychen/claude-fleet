@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 
@@ -254,7 +254,11 @@ fn collect_process_tree(root_pid: u32) -> Vec<u32> {
 
 #[cfg(unix)]
 #[tauri::command]
-fn kill_session(pid: u32) -> Result<(), String> {
+fn kill_session(
+    pid: u32,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
     let pids = collect_process_tree(pid);
     log_debug(&format!(
         "kill_session: SIGTERM to {} pids (root={}): {:?}",
@@ -266,14 +270,34 @@ fn kill_session(pid: u32) -> Result<(), String> {
         unsafe { libc::kill(p as libc::pid_t, libc::SIGTERM) };
     }
 
-    // Spawn background thread to SIGKILL survivors after 2 s
+    let sessions_arc = state.sessions.clone();
+
+    // Spawn background thread: rescan after 500ms, then SIGKILL survivors after 2s
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(2000));
+        // Rescan so the UI reflects the killed session immediately
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if let Some(claude_dir) = crate::session::get_claude_dir() {
+            let sessions = crate::session::scan_sessions(&claude_dir);
+            *sessions_arc.lock().unwrap() = sessions.clone();
+            let _ = app.emit("sessions-updated", &sessions);
+            crate::update_tray(&app, &sessions);
+        }
+
+        // SIGKILL any survivors
+        std::thread::sleep(std::time::Duration::from_millis(1500));
         for &p in pids.iter().rev() {
             let alive = unsafe { libc::kill(p as libc::pid_t, 0) } == 0;
             if alive {
                 unsafe { libc::kill(p as libc::pid_t, libc::SIGKILL) };
             }
+        }
+
+        // Final rescan after SIGKILL
+        if let Some(claude_dir) = crate::session::get_claude_dir() {
+            let sessions = crate::session::scan_sessions(&claude_dir);
+            *sessions_arc.lock().unwrap() = sessions.clone();
+            let _ = app.emit("sessions-updated", &sessions);
+            crate::update_tray(&app, &sessions);
         }
     });
 
@@ -282,11 +306,27 @@ fn kill_session(pid: u32) -> Result<(), String> {
 
 #[cfg(not(unix))]
 #[tauri::command]
-fn kill_session(pid: u32) -> Result<(), String> {
+fn kill_session(
+    pid: u32,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
     std::process::Command::new("taskkill")
         .args(["/F", "/T", "/PID", &pid.to_string()])
         .status()
         .map_err(|e| format!("taskkill failed: {e}"))?;
+
+    let sessions_arc = state.sessions.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if let Some(claude_dir) = crate::session::get_claude_dir() {
+            let sessions = crate::session::scan_sessions(&claude_dir);
+            *sessions_arc.lock().unwrap() = sessions.clone();
+            let _ = app.emit("sessions-updated", &sessions);
+            crate::update_tray(&app, &sessions);
+        }
+    });
+
     Ok(())
 }
 
@@ -672,6 +712,7 @@ pub fn run() {
             install_fleet_skill,
             save_skill_file,
             remote::list_saved_connections,
+            remote::list_ssh_profiles,
             remote::delete_connection,
             remote::connect_remote,
             remote::disconnect_remote,
