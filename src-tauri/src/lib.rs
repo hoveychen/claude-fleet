@@ -17,6 +17,14 @@ use account::{AccountInfo, read_keychain_credentials};
 use backend::Backend;
 use session::SessionInfo;
 
+fn load_png_as_tray_icon(bytes: &[u8]) -> tauri::image::Image<'static> {
+    let img = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+        .expect("failed to decode tray icon PNG")
+        .into_rgba8();
+    let (w, h) = img.dimensions();
+    tauri::image::Image::new_owned(img.into_raw(), w, h)
+}
+
 #[tauri::command]
 fn get_log_path() -> String {
     dirs::home_dir()
@@ -515,10 +523,29 @@ pub fn run() {
                 .items(&[&switch_item, &sep, &quit_item])
                 .build()?;
 
-            let icon = app.default_window_icon().cloned().unwrap();
+            #[cfg(target_os = "macos")]
+            let tray_builder = {
+                let icon = load_png_as_tray_icon(include_bytes!("../icons/tray-macos.png"));
+                TrayIconBuilder::with_id("main")
+                    .icon(icon)
+                    .icon_as_template(true)
+            };
 
-            TrayIconBuilder::with_id("main")
-                .icon(icon)
+            #[cfg(target_os = "windows")]
+            let tray_builder = {
+                let icon = load_png_as_tray_icon(include_bytes!("../icons/tray-windows.png"));
+                TrayIconBuilder::with_id("main")
+                    .icon(icon)
+            };
+
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            let tray_builder = {
+                let icon = app.default_window_icon().cloned().unwrap();
+                TrayIconBuilder::with_id("main")
+                    .icon(icon)
+            };
+
+            tray_builder
                 .menu(&tray_menu)
                 .tooltip("Claude Fleet")
                 .on_menu_event(|app, event| match event.id().as_ref() {
