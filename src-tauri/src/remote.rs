@@ -104,6 +104,10 @@ impl crate::backend::Backend for RemoteBackend {
         remote_kill_session(&self.base_url, &self.token, pid, false)
     }
 
+    fn kill_workspace(&self, workspace_path: String) -> Result<(), String> {
+        remote_kill_workspace(&self.base_url, &self.token, &workspace_path)
+    }
+
     fn account_info(&self) -> Result<crate::account::AccountInfo, String> {
         remote_get_account_info(&self.base_url, &self.token)
     }
@@ -851,6 +855,25 @@ pub fn disconnect_remote(
 /// Encode a path for use in a query parameter.
 pub fn encode_path(path: &str) -> String {
     utf8_percent_encode(path, NON_ALPHANUMERIC).to_string()
+}
+
+/// GET `{base_url}/stop_workspace?path=<encoded>` to kill all claude processes in a workspace.
+pub fn remote_kill_workspace(base_url: &str, token: &str, workspace_path: &str) -> Result<(), String> {
+    let encoded = workspace_path.replace('/', "%2F");
+    let url = format!("{}/stop_workspace?path={}", base_url, encoded);
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("Remote stop_workspace error: HTTP {}", resp.status()));
+    }
+    Ok(())
 }
 
 /// POST `{base_url}/stop?pid=<pid>&force=<bool>` to kill a process on the remote host.

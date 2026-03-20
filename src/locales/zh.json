@@ -107,6 +107,9 @@
     "path": "路径"
   },
   "stop_session": "停止会话（清除进程树）",
+  "stop_session_imprecise": "停止该 workspace 下的所有会话（无法精确匹配 PID —— 该 workspace 有多个 claude 进程）",
+  "stop_confirm": "停止 {{name}} 中的会话？",
+  "stop_imprecise_confirm": "workspace「{{workspace}}」中存在多个 Claude 进程，无法单独定位。\n\n此操作将停止该 workspace 下的所有 Claude Agent，确认继续？",
   "card": {
     "tip_main": "主进程会话",
     "tip_subagent": "子进程",

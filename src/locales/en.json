@@ -107,6 +107,9 @@
     "path": "Path"
   },
   "stop_session": "Stop session (kill process tree)",
+  "stop_session_imprecise": "Stop all sessions in this workspace (imprecise PID match — multiple claude processes share this workspace)",
+  "stop_confirm": "Stop session in {{name}}?",
+  "stop_imprecise_confirm": "Multiple Claude processes share workspace \"{{workspace}}\" and cannot be individually targeted.\n\nThis will stop ALL Claude agents in this workspace. Continue?",
   "card": {
     "tip_main": "Main agent session",
     "tip_subagent": "Subagent",

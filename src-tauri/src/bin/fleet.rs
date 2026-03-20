@@ -607,6 +607,14 @@ fn cmd_stop(id_prefix: &str, force: bool) {
 
     let s = matched[0];
 
+    if s.is_subagent {
+        eprintln!(
+            "Error: '{}' is a subagent — stop the parent session instead.",
+            short_id(&s.id)
+        );
+        std::process::exit(1);
+    }
+
     let Some(pid) = s.pid else {
         eprintln!(
             "Agent {} ({}) has no associated PID — cannot stop.",
@@ -615,6 +623,14 @@ fn cmd_stop(id_prefix: &str, force: bool) {
         );
         std::process::exit(1);
     };
+
+    if !s.pid_precise {
+        eprintln!(
+            "Warning: multiple claude processes share workspace '{}'. \
+             Stopping may affect other sessions in the same workspace.",
+            s.workspace_name
+        );
+    }
 
     #[cfg(unix)]
     {
@@ -823,6 +839,36 @@ fn cmd_serve(port: u16, token: String) {
                                 .with_header(json_header),
                         );
                     }
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = request.respond(tiny_http::Response::empty(400));
+                }
+            }
+
+            "/stop_workspace" => {
+                let workspace = query.get("path")
+                    .map(|s| s.replace("%2F", "/"))
+                    .unwrap_or_default();
+                if workspace.is_empty() {
+                    let _ = request.respond(tiny_http::Response::empty(400));
+                    continue;
+                }
+                #[cfg(unix)]
+                {
+                    use claude_fleet_lib::session::scan_cli_processes;
+                    let procs = scan_cli_processes();
+                    let pids: Vec<u32> = procs.iter()
+                        .filter(|p| p.cwd == workspace)
+                        .map(|p| p.pid)
+                        .collect();
+                    for &pid in &pids {
+                        unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+                    }
+                    let _ = request.respond(
+                        tiny_http::Response::from_string(r#"{"ok":true}"#)
+                            .with_header(json_header),
+                    );
                 }
                 #[cfg(not(unix))]
                 {

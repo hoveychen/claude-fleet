@@ -50,6 +50,7 @@ pub struct SessionInfo {
     pub agent_type: Option<String>,
     pub agent_description: Option<String>,
     pub slug: Option<String>,
+    pub ai_title: Option<String>,
     pub status: SessionStatus,
     pub token_speed: f64,
     pub total_output_tokens: u64,
@@ -60,6 +61,10 @@ pub struct SessionInfo {
     pub model: Option<String>,
     pub thinking_level: Option<String>,
     pub pid: Option<u32>,
+    /// True when the PID is unambiguously matched to this specific session.
+    /// False when multiple claude processes share the same cwd and none carries
+    /// a matching --resume flag — stopping may affect sibling sessions.
+    pub pid_precise: bool,
     pub last_skill: Option<String>,
 }
 
@@ -105,31 +110,99 @@ fn workspace_name(path: &str) -> String {
         .to_string()
 }
 
-// ── CLI process scanning (workspace_path → pid) ──────────────────────────────
+// ── CLI process scanning ─────────────────────────────────────────────────────
 
-/// Scan all running `claude` processes and return a map of cwd → pid.
+/// A running `claude` process discovered by sysinfo.
+#[derive(Debug, Clone)]
+pub struct CliProcess {
+    pub pid: u32,
+    pub ppid: Option<u32>,
+    pub cwd: String,
+    /// Session ID parsed from `--resume <id>` in the process argv, if present.
+    pub resume_session_id: Option<String>,
+}
+
+fn extract_resume_id(cmd: &[std::ffi::OsString]) -> Option<String> {
+    let mut iter = cmd.iter();
+    while let Some(arg) = iter.next() {
+        let s = arg.to_string_lossy();
+        if s == "--resume" || s == "-r" {
+            return iter.next().map(|v| v.to_string_lossy().into_owned());
+        }
+        if let Some(val) = s.strip_prefix("--resume=") {
+            return Some(val.to_owned());
+        }
+    }
+    None
+}
+
+/// Resolve a PID for a specific session given all processes sharing the same cwd.
+///
+/// Matching priority (highest → lowest):
+/// 1. Exact `--resume <session_id>` match → always precise.
+/// 2. Parent-child filtering: drop any claude process whose parent is also a
+///    claude process in this workspace (those are subagent child processes).
+///    If exactly one "root" process remains → precise.
+/// 3. Single process → precise regardless.
+/// 4. Multiple unresolvable processes → imprecise (first as representative).
+fn resolve_pid(procs: &[CliProcess], session_id: &str) -> (Option<u32>, bool) {
+    if procs.is_empty() {
+        return (None, false);
+    }
+
+    // Rule 1: exact --resume match.
+    if let Some(p) = procs.iter().find(|p| {
+        p.resume_session_id.as_deref() == Some(session_id)
+    }) {
+        return (Some(p.pid), true);
+    }
+
+    // Rule 2: filter out child claude processes (subagents).
+    // A process is a "child" if its parent PID is also in this workspace's process set.
+    let pid_set: std::collections::HashSet<u32> = procs.iter().map(|p| p.pid).collect();
+    let roots: Vec<&CliProcess> = procs.iter().filter(|p| {
+        !p.ppid.map_or(false, |ppid| pid_set.contains(&ppid))
+    }).collect();
+
+    match roots.len() {
+        0 => (Some(procs[0].pid), false), // shouldn't happen; fall back
+        1 => (Some(roots[0].pid), true),
+        _ => (Some(roots[0].pid), false), // still ambiguous after filtering
+    }
+}
+
+/// Scan all running `claude` processes.
 /// Uses sysinfo for cross-platform support (macOS, Linux, Windows).
-pub fn scan_cli_processes() -> std::collections::HashMap<String, u32> {
+pub fn scan_cli_processes() -> Vec<CliProcess> {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
-    let mut map = std::collections::HashMap::new();
+    let mut result = Vec::new();
     let mut sys = System::new();
     sys.refresh_processes_specifics(
         ProcessesToUpdate::All,
         true,
-        ProcessRefreshKind::nothing().with_cwd(UpdateKind::Always),
+        ProcessRefreshKind::nothing()
+            .with_cwd(UpdateKind::Always)
+            .with_cmd(UpdateKind::Always),
     );
     for (pid, process) in sys.processes() {
         let name = process.name().to_string_lossy();
         if name == "claude" || name == "claude.exe" {
             if let Some(cwd) = process.cwd() {
                 if let Some(path) = cwd.to_str() {
-                    map.insert(path.to_string(), pid.as_u32());
+                    let resume_session_id = extract_resume_id(process.cmd());
+                    let ppid = process.parent().map(|p| p.as_u32());
+                    result.push(CliProcess {
+                        pid: pid.as_u32(),
+                        ppid,
+                        cwd: path.to_string(),
+                        resume_session_id,
+                    });
                 }
             }
         }
     }
-    map
+    result
 }
 
 // ── IDE session scanning ─────────────────────────────────────────────────────
@@ -439,6 +512,7 @@ fn parse_session_info(
     meta_model: Option<String>,
     meta_thinking_level: Option<String>,
     pid: Option<u32>,
+    pid_precise: bool,
 ) -> Option<SessionInfo> {
     let metadata = fs::metadata(jsonl_path).ok()?;
     let last_modified = metadata.modified().ok()?;
@@ -481,6 +555,13 @@ fn parse_session_info(
         .filter_map(|v| v.get("slug").and_then(|s| s.as_str()).map(|s| s.to_string()))
         .last();
 
+    // ai-title appears near the start of the file; scan all lines
+    let ai_title = all_lines
+        .iter()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|v| v.get("type").and_then(|t| t.as_str()) == Some("ai-title"))
+        .and_then(|v| v.get("aiTitle").and_then(|t| t.as_str()).map(|s| s.to_string()));
+
     let model = meta_model.or_else(|| extract_model(&last_n));
     let last_skill = extract_last_skill(&last_n);
 
@@ -503,6 +584,7 @@ fn parse_session_info(
         agent_type,
         agent_description,
         slug,
+        ai_title,
         status,
         token_speed,
         total_output_tokens,
@@ -513,6 +595,7 @@ fn parse_session_info(
         model,
         thinking_level,
         pid,
+        pid_precise,
         last_skill,
     })
 }
@@ -532,7 +615,7 @@ struct SubagentMeta {
 pub fn scan_sessions(claude_dir: &Path) -> Vec<SessionInfo> {
     let mut sessions = Vec::new();
     let ide_sessions = scan_ide_sessions(claude_dir);
-    let cli_processes = scan_cli_processes(); // workspace_path → pid for CLI sessions
+    let cli_processes = scan_cli_processes();
 
     let projects_dir = claude_dir.join("projects");
     let Ok(workspace_entries) = fs::read_dir(&projects_dir) else {
@@ -572,9 +655,15 @@ pub fn scan_sessions(claude_dir: &Path) -> Vec<SessionInfo> {
 
         let ws_name = workspace_name(&workspace_path);
         let ide_name = ide.map(|s| s.ide_name.clone());
+
+        // Collect all CLI processes for this workspace (may be >1 when subagents are running).
         // PID: use Claude CLI process only (not the IDE PID — killing the IDE PID would
         // terminate the editor itself, not just the Claude session).
-        let session_pid = cli_processes.get(&workspace_path).copied();
+        let procs_in_cwd: Vec<CliProcess> = cli_processes
+            .iter()
+            .filter(|p| p.cwd == workspace_path)
+            .cloned()
+            .collect();
 
         let Ok(entries) = fs::read_dir(&workspace_dir) else {
             continue;
@@ -591,6 +680,8 @@ pub fn scan_sessions(claude_dir: &Path) -> Vec<SessionInfo> {
                     .unwrap_or_default()
                     .to_string();
 
+                let (session_pid, pid_precise) = resolve_pid(&procs_in_cwd, &session_id);
+
                 if let Some(info) = parse_session_info(
                     &path,
                     session_id,
@@ -604,6 +695,7 @@ pub fn scan_sessions(claude_dir: &Path) -> Vec<SessionInfo> {
                     None,
                     None,
                     session_pid,
+                    pid_precise,
                 ) {
                     sessions.push(info);
                 }
@@ -645,6 +737,10 @@ pub fn scan_sessions(claude_dir: &Path) -> Vec<SessionInfo> {
                     let meta_model = meta.as_ref().and_then(|m| m.model.clone());
                     let meta_thinking_level = meta.and_then(|m| m.thinking_level.clone());
 
+                    // Subagents share the parent's PID resolution; never precise on their own
+                    // since we can't kill just the subagent independently.
+                    let (sub_pid, _) = resolve_pid(&procs_in_cwd, &parent_session_id);
+
                     if let Some(info) = parse_session_info(
                         &agent_path,
                         agent_id,
@@ -657,7 +753,8 @@ pub fn scan_sessions(claude_dir: &Path) -> Vec<SessionInfo> {
                         agent_description,
                         meta_model,
                         meta_thinking_level,
-                        session_pid, // subagents share the workspace's PID; killing the tree stops them too
+                        sub_pid,
+                        false, // subagents are never pid_precise: stop parent instead
                     ) {
                         sessions.push(info);
                     }

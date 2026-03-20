@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useSessionsStore } from "../store";
 import type { SessionInfo, SessionStatus } from "../types";
 import { InspectModal } from "./InspectModal";
-import { SessionCard, StatusBadge, StatusIcon, formatModel } from "./SessionCard";
+import { SessionCard, StatusBadge, StatusIcon, SubagentTypeIcon, formatModel } from "./SessionCard";
 import styles from "./GalleryView.module.css";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -50,9 +50,12 @@ function SubagentChip({ session, index, onSelect }: ChipProps) {
     >
       <StatusIcon status={session.status} />
       <span className={styles.chip_index}>#{index}</span>
-      <span className={styles.chip_name}>
-        {session.agentType ?? t("subagent")}
+      <span className={styles.chip_type_icon}>
+        <SubagentTypeIcon type={session.agentType} />
       </span>
+      {session.agentDescription && (
+        <span className={styles.chip_desc}>{session.agentDescription}</span>
+      )}
       {session.model && (
         <span className={styles.chip_model}>{formatModel(session.model)}</span>
       )}

@@ -170,8 +170,15 @@
   flex-shrink: 0;
 }
 
-.chip_name {
-  max-width: 120px;
+.chip_type_icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.chip_desc {
+  max-width: 160px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

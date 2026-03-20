@@ -11,6 +11,7 @@ pub trait Backend: Send + Sync {
     fn list_sessions(&self) -> Vec<SessionInfo>;
     fn get_messages(&self, path: &str) -> Result<Vec<Value>, String>;
     fn kill_pid(&self, pid: u32) -> Result<(), String>;
+    fn kill_workspace(&self, workspace_path: String) -> Result<(), String>;
     fn account_info(&self) -> Result<AccountInfo, String>;
     /// Start tailing a session file for new lines.
     /// Returns the initial byte offset (file size at call time).
@@ -33,6 +34,9 @@ impl Backend for NullBackend {
         Err("backend not ready".into())
     }
     fn kill_pid(&self, _: u32) -> Result<(), String> {
+        Err("backend not ready".into())
+    }
+    fn kill_workspace(&self, _: String) -> Result<(), String> {
         Err("backend not ready".into())
     }
     fn account_info(&self) -> Result<AccountInfo, String> {

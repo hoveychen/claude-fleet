@@ -203,7 +203,7 @@
 }
 
 .tag_main    { background: var(--tag-main-bg); color: var(--tag-main-fg); }
-.tag_subagent{ background: var(--tag-sub-bg);  color: var(--tag-sub-fg); }
+.tag_subagent{ background: var(--tag-sub-bg);  color: var(--tag-sub-fg); display: inline-flex; align-items: center; padding: 2px 5px; }
 .tag_ide     { background: var(--color-bg-secondary); color: var(--color-text-dim); }
 .tag_model   { background: var(--color-bg-secondary); color: var(--color-text-secondary); }
 .tag_thinking{ background: var(--thinking-toggle-bg); color: var(--thinking-label); display: inline-flex; align-items: center; }
@@ -216,6 +216,16 @@
 }
 
 /* Preview text */
+.ai_title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text);
+  margin: 0 0 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .preview {
   font-size: 11px;
   color: var(--color-text-secondary);
@@ -280,4 +290,13 @@
 .stop_btn_killing {
   opacity: 1;
   animation: pulse 0.8s ease-in-out infinite;
+}
+
+.stop_btn_warn {
+  color: var(--badge-executing-fg);
+}
+
+.stop_btn_warn:hover {
+  background: var(--badge-executing-bg);
+  color: var(--badge-executing-fg);
 }

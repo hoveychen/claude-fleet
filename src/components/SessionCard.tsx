@@ -4,6 +4,52 @@ import { invoke } from "@tauri-apps/api/core";
 import type { SessionInfo, SessionStatus } from "../types";
 import styles from "./SessionCard.module.css";
 
+// ── Subagent type icon ────────────────────────────────────────────────────────
+
+export function SubagentTypeIcon({ type }: { type: string | null }) {
+  switch (type?.toLowerCase()) {
+    case "explore":
+      // Magnifying glass
+      return (
+        <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden>
+          <circle cx="5" cy="5" r="3.5" />
+          <line x1="7.5" y1="7.5" x2="11" y2="11" />
+        </svg>
+      );
+    case "plan":
+      // Clipboard / blueprint
+      return (
+        <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor" aria-hidden>
+          <rect x="1.5" y="2" width="9" height="9.5" rx="1.2" opacity="0.25" />
+          <rect x="1.5" y="2" width="9" height="9.5" rx="1.2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <line x1="4" y1="5.5" x2="8" y2="5.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          <line x1="4" y1="7.5" x2="7" y2="7.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          <rect x="3.5" y="1" width="5" height="2" rx="0.8" fill="currentColor" />
+        </svg>
+      );
+    case "general-purpose":
+      // Wrench
+      return (
+        <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor" aria-hidden>
+          <path d="M9.5 1.5 C8 1.5 7 2.5 7 4 C7 4.3 7.05 4.6 7.1 4.85 L1.8 10.15 C1.5 10.45 1.5 10.9 1.8 11.2 C2.1 11.5 2.55 11.5 2.85 11.2 L8.15 5.9 C8.4 5.95 8.7 6 9 6 C10.5 6 11.5 5 11.5 3.5 C11.5 3.1 11.4 2.75 11.25 2.45 L9.7 4 L8.8 3.1 L10.35 1.55 C10.05 1.4 9.8 1.5 9.5 1.5Z" />
+        </svg>
+      );
+    case "claude-code-guide":
+      // Open book
+      return (
+        <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden>
+          <path d="M6 10.5 C6 10.5 3 9 1 9.5 L1 2.5 C3 2 6 3.5 6 3.5" fill="currentColor" fillOpacity="0.15" />
+          <path d="M6 10.5 C6 10.5 9 9 11 9.5 L11 2.5 C9 2 6 3.5 6 3.5" fill="currentColor" fillOpacity="0.15" />
+          <path d="M6 3.5 L6 10.5" />
+          <path d="M1 2.5 C3 2 6 3.5 6 3.5 C6 3.5 9 2 11 2.5 L11 9.5 C9 9 6 10.5 6 10.5 C6 10.5 3 9 1 9.5 Z" />
+        </svg>
+      );
+    default:
+      // Diamond — unknown type
+      return <span aria-hidden>⎇</span>;
+  }
+}
+
 // ── Status icon ───────────────────────────────────────────────────────────────
 
 export function StatusIcon({ status }: { status: SessionStatus }) {
@@ -154,11 +200,27 @@ export function SessionCard({ session, isSelected, onClick, variant, hideHeader 
   const handleStop = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!session.pid || killing) return;
-    setKilling(true);
-    try {
-      await invoke("kill_session", { pid: session.pid });
-    } finally {
-      setKilling(false);
+
+    if (session.pidPrecise) {
+      const confirmed = window.confirm(t("stop_confirm", { name: session.workspaceName }));
+      if (!confirmed) return;
+      setKilling(true);
+      try {
+        await invoke("kill_session", { pid: session.pid });
+      } finally {
+        setKilling(false);
+      }
+    } else {
+      const confirmed = window.confirm(
+        t("stop_imprecise_confirm", { workspace: session.workspaceName })
+      );
+      if (!confirmed) return;
+      setKilling(true);
+      try {
+        await invoke("kill_workspace_sessions", { workspacePath: session.workspacePath });
+      } finally {
+        setKilling(false);
+      }
     }
   };
 
@@ -174,11 +236,11 @@ export function SessionCard({ session, isSelected, onClick, variant, hideHeader 
       <div className={`${styles.header} ${hideHeader ? styles.header_compact : ""}`}>
         {!hideHeader && <span className={styles.workspace}>{session.workspaceName}</span>}
         {!hideHeader && <StatusBadge status={session.status} />}
-        {isActive && session.pid !== null && (
+        {isActive && session.pid !== null && !session.isSubagent && (
           <button
-            className={`${styles.stop_btn} ${killing ? styles.stop_btn_killing : ""}`}
+            className={`${styles.stop_btn} ${killing ? styles.stop_btn_killing : ""} ${!session.pidPrecise ? styles.stop_btn_warn : ""}`}
             onClick={handleStop}
-            title={t("stop_session")}
+            title={session.pidPrecise ? t("stop_session") : t("stop_session_imprecise")}
             disabled={killing}
           >
             ■
@@ -189,8 +251,8 @@ export function SessionCard({ session, isSelected, onClick, variant, hideHeader 
       {/* Meta row */}
       <div className={styles.meta}>
         {session.isSubagent ? (
-          <span className={styles.tag_subagent} title={session.agentDescription ? t("card.tip_subagent_desc", { desc: session.agentDescription }) : t("card.tip_subagent")}>
-            ⎇ {session.agentType ?? t("subagent")}
+          <span className={styles.tag_subagent} title={session.agentType ?? t("subagent")}>
+            <SubagentTypeIcon type={session.agentType} />
           </span>
         ) : (
           <span className={styles.tag_main} title={t("card.tip_main")}>◈ {t("main")}</span>
@@ -217,6 +279,13 @@ export function SessionCard({ session, isSelected, onClick, variant, hideHeader 
           <span className={styles.slug} title={t("card.tip_slug", { slug: session.slug })}>{session.slug}</span>
         )}
       </div>
+
+      {/* AI Title (main session) or agent description (subagent) */}
+      {(session.aiTitle || (session.isSubagent && session.agentDescription)) && (
+        <p className={styles.ai_title} title={session.aiTitle ?? session.agentDescription ?? undefined}>
+          {session.aiTitle ?? session.agentDescription}
+        </p>
+      )}
 
       {/* Preview */}
       {session.lastMessagePreview && (

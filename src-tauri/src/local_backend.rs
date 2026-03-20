@@ -177,6 +177,93 @@ impl Backend for LocalBackend {
             .collect())
     }
 
+    fn kill_workspace(&self, workspace_path: String) -> Result<(), String> {
+        #[cfg(unix)]
+        {
+            use crate::session::scan_cli_processes;
+            let procs = scan_cli_processes();
+            let root_pids: Vec<u32> = procs
+                .iter()
+                .filter(|p| p.cwd == workspace_path)
+                .map(|p| p.pid)
+                .collect();
+
+            if root_pids.is_empty() {
+                return Err(format!("No claude processes found in {}", workspace_path));
+            }
+
+            // Collect the full process tree for all root pids.
+            let mut all_pids: std::collections::HashSet<u32> = std::collections::HashSet::new();
+            for &root in &root_pids {
+                for pid in collect_process_tree(root) {
+                    all_pids.insert(pid);
+                }
+            }
+            let pids: Vec<u32> = all_pids.into_iter().collect();
+
+            crate::log_debug(&format!(
+                "kill_workspace: SIGTERM to {} pids for workspace '{}': {:?}",
+                pids.len(),
+                workspace_path,
+                pids
+            ));
+
+            for &p in pids.iter().rev() {
+                unsafe { libc::kill(p as libc::pid_t, libc::SIGTERM) };
+            }
+
+            let app = self.app.clone();
+            let sessions = self.sessions.clone();
+            let dir = get_claude_dir();
+
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(500));
+                if let Some(ref d) = dir {
+                    rescan_and_emit(d, &app, &sessions);
+                }
+                std::thread::sleep(Duration::from_millis(1500));
+                for &p in pids.iter().rev() {
+                    if unsafe { libc::kill(p as libc::pid_t, 0) } == 0 {
+                        unsafe { libc::kill(p as libc::pid_t, libc::SIGKILL) };
+                    }
+                }
+                if let Some(ref d) = dir {
+                    rescan_and_emit(d, &app, &sessions);
+                }
+            });
+
+            Ok(())
+        }
+
+        #[cfg(not(unix))]
+        {
+            std::process::Command::new("taskkill")
+                .args(["/F", "/T", "/PID"])
+                .args(
+                    crate::session::scan_cli_processes()
+                        .iter()
+                        .filter(|p| p.cwd == workspace_path)
+                        .map(|p| p.pid.to_string())
+                        .collect::<Vec<_>>(),
+                )
+                .status()
+                .map_err(|e| format!("taskkill failed: {e}"))?;
+
+            let app = self.app.clone();
+            let sessions = self.sessions.clone();
+            let dir = get_claude_dir();
+
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(500));
+                if let Some(ref d) = dir {
+                    rescan_and_emit(d, &app, &sessions);
+                }
+            });
+
+            Ok(())
+        }
+    }
+
     fn kill_pid(&self, pid: u32) -> Result<(), String> {
         #[cfg(unix)]
         {

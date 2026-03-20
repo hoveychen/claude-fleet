@@ -20,6 +20,7 @@ export interface SessionInfo {
   agentType: string | null;
   agentDescription: string | null;
   slug: string | null;
+  aiTitle: string | null;
   status: SessionStatus;
   tokenSpeed: number;
   totalOutputTokens: number;
@@ -30,6 +31,7 @@ export interface SessionInfo {
   model: string | null;
   thinkingLevel: string | null;
   pid: number | null;
+  pidPrecise: boolean;
   lastSkill: string | null;
 }
 

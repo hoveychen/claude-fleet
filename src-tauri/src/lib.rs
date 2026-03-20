@@ -198,6 +198,11 @@ fn kill_session(pid: u32, state: tauri::State<'_, AppState>) -> Result<(), Strin
     state.backend.lock().unwrap().kill_pid(pid)
 }
 
+#[tauri::command]
+fn kill_workspace_sessions(workspace_path: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.backend.lock().unwrap().kill_workspace(workspace_path)
+}
+
 // ── App state ────────────────────────────────────────────────────────────────
 
 pub struct AppState {
@@ -575,6 +580,7 @@ pub fn run() {
             get_log_path,
             get_platform,
             kill_session,
+            kill_workspace_sessions,
             check_setup_status,
             install_fleet_cli,
             detect_ai_tools,
