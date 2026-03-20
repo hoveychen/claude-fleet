@@ -111,21 +111,60 @@ function UsageBar({
   );
 }
 
-export function AccountInfo() {
+// ── Cursor account types ──────────────────────────────────────────────────────
+
+interface CursorDailyStats {
+  date: string;
+  tabSuggestedLines: number;
+  tabAcceptedLines: number;
+  composerSuggestedLines: number;
+  composerAcceptedLines: number;
+}
+
+interface CursorUsageItem {
+  name: string;
+  used: number;
+  limit: number | null;
+  resetsAt: string | null;
+}
+
+interface CursorAccountInfoData {
+  email: string;
+  signUpType: string;
+  membershipType: string;
+  subscriptionStatus: string;
+  totalPrompts: number;
+  dailyStats: CursorDailyStats[];
+  usage: CursorUsageItem[];
+}
+
+interface DetectedTools {
+  cli: boolean;
+  vscode: boolean;
+  jetbrains: boolean;
+  desktop: boolean;
+  cursor: boolean;
+}
+
+interface SetupStatus {
+  detected_tools: DetectedTools;
+  [key: string]: unknown;
+}
+
+type AccountTab = "claude" | "cursor";
+
+// ── Claude Code tab ──────────────────────────────────────────────────────────
+
+function ClaudeCodeTab() {
   const { t } = useTranslation();
   const [info, setInfo] = useState<AccountInfoData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [logPath, setLogPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [expanded, setExpanded] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
-  const [, setTick] = useState(0); // force re-render for "Xm ago" display
+  const [, setTick] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [isMacOS, setIsMacOS] = useState(false);
-  const [showAiModal, setShowAiModal] = useState(false);
-  const [cliInstallState, setCliInstallState] = useState<"idle" | "installing" | "done" | "error">("idle");
-  const [cliInstallMsg, setCliInstallMsg] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -144,9 +183,231 @@ export function AccountInfo() {
     }
   }
 
-  // Detect platform
+  useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = autoRefresh ? setInterval(load, AUTO_REFRESH_INTERVAL_MS) : null;
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [autoRefresh]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <>
+      {loading && <p className={styles.dim}>{t("account.loading")}</p>}
+      {error && (
+        <div className={styles.error}>
+          <p>{error}</p>
+          {logPath && <p className={styles.log_hint}>{t("account.debug_log", { path: logPath })}</p>}
+          <button className={styles.retry} onClick={load}>{t("account.retry")}</button>
+        </div>
+      )}
+      {info && (
+        <>
+          <section className={styles.section}>
+            <div className={styles.section_title}>{t("account.title")}</div>
+            <Row label={t("account.auth")} value="Claude AI" />
+            <Row label={t("account.email")} value={info.email} />
+            <Row label={t("account.org")} value={info.organization_name} />
+            <Row label={t("account.plan")} value={info.plan} />
+          </section>
+          <section className={styles.section}>
+            <div className={styles.section_title}>{t("account.usage")}</div>
+            <UsageBar label={t("account.five_hour")} stats={info.five_hour} />
+            <UsageBar label={t("account.seven_day")} stats={info.seven_day} />
+            <UsageBar label={t("account.seven_day_sonnet")} stats={info.seven_day_sonnet} />
+          </section>
+        </>
+      )}
+      <div className={styles.footer}>
+        {lastUpdated && !loading && (
+          <span className={styles.last_updated}>{formatLastUpdated(lastUpdated, t)}</span>
+        )}
+        <div className={styles.footer_actions}>
+          <label className={styles.auto_toggle}>
+            <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} />
+            {t("account.auto_5m")}
+          </label>
+          <button className={styles.refresh} onClick={load} disabled={loading} title={t("account.refresh_now")}>↻</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Cursor tab ───────────────────────────────────────────────────────────────
+
+function CursorUsageBar({ item }: { item: CursorUsageItem }) {
+  const { t } = useTranslation();
+  const pct = item.limit ? Math.round((item.used / item.limit) * 100) : null;
+
+  return (
+    <div className={styles.usage_item}>
+      <div className={styles.usage_header}>
+        <span className={styles.usage_label}>{item.name}</span>
+        <span className={styles.usage_pct}>
+          {item.limit ? `${item.used} / ${item.limit}` : item.used.toLocaleString()}
+        </span>
+      </div>
+      {pct !== null && (
+        <div className={styles.bar_track}>
+          <div
+            className={styles.bar_fill}
+            style={{ width: `${Math.min(pct, 100)}%` }}
+          />
+        </div>
+      )}
+      {item.resetsAt && (
+        <div className={styles.usage_footer}>
+          <span className={styles.usage_reset}>
+            {t("account.resets_in", { t: formatResetIn(item.resetsAt, t) })}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CursorTab() {
+  const { t } = useTranslation();
+  const [info, setInfo] = useState<CursorAccountInfoData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [, setTick] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await invoke<CursorAccountInfoData>("get_cursor_account_info");
+      setInfo(data);
+      setLastUpdated(Date.now());
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = autoRefresh ? setInterval(load, AUTO_REFRESH_INTERVAL_MS) : null;
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [autoRefresh]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <>
+      {loading && <p className={styles.dim}>{t("account.loading")}</p>}
+      {error && (
+        <div className={styles.error}>
+          <p>{error}</p>
+          <button className={styles.retry} onClick={load}>{t("account.retry")}</button>
+        </div>
+      )}
+      {info && (
+        <>
+          <section className={styles.section}>
+            <div className={styles.section_title}>{t("account.title")}</div>
+            <Row label={t("account.email")} value={info.email} />
+            <Row label={t("account.cursor_plan")} value={info.membershipType || "—"} />
+            <Row label={t("account.cursor_status")} value={info.subscriptionStatus || "—"} />
+            <Row label={t("account.cursor_sign_up")} value={info.signUpType || "—"} />
+            <Row label={t("account.cursor_prompts")} value={info.totalPrompts.toLocaleString()} />
+          </section>
+          {info.usage.length > 0 && (
+            <section className={styles.section}>
+              <div className={styles.section_title}>{t("account.usage")}</div>
+              {info.usage.map((item) => (
+                <CursorUsageBar key={item.name} item={item} />
+              ))}
+            </section>
+          )}
+          {info.dailyStats.length > 0 && (
+            <section className={styles.section}>
+              <div className={styles.section_title}>{t("account.cursor_daily_title")}</div>
+              <table className={styles.stats_table}>
+                <thead>
+                  <tr>
+                    <th>{t("account.cursor_col_date")}</th>
+                    <th>{t("account.cursor_col_tab")}</th>
+                    <th>{t("account.cursor_col_composer")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {info.dailyStats.map((d) => (
+                    <tr key={d.date}>
+                      <td>{d.date}</td>
+                      <td title={t("account.cursor_suggested_accepted")}>
+                        {d.tabSuggestedLines}/{d.tabAcceptedLines}
+                      </td>
+                      <td title={t("account.cursor_suggested_accepted")}>
+                        {d.composerSuggestedLines}/{d.composerAcceptedLines}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
+        </>
+      )}
+      <div className={styles.footer}>
+        {lastUpdated && !loading && (
+          <span className={styles.last_updated}>{formatLastUpdated(lastUpdated, t)}</span>
+        )}
+        <div className={styles.footer_actions}>
+          <label className={styles.auto_toggle}>
+            <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} />
+            {t("account.auto_5m")}
+          </label>
+          <button className={styles.refresh} onClick={load} disabled={loading} title={t("account.refresh_now")}>↻</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Main AccountInfo panel ───────────────────────────────────────────────────
+
+export function AccountInfo() {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(true);
+  const [activeTab, setActiveTab] = useState<AccountTab>("claude");
+  const [mountedTabs, setMountedTabs] = useState<Set<AccountTab>>(new Set(["claude"]));
+  const [isMacOS, setIsMacOS] = useState(false);
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [cliInstallState, setCliInstallState] = useState<"idle" | "installing" | "done" | "error">("idle");
+  const [cliInstallMsg, setCliInstallMsg] = useState<string | null>(null);
+  const [hasClaude, setHasClaude] = useState(true);
+  const [hasCursor, setHasCursor] = useState(false);
+
   useEffect(() => {
     invoke<string>("get_platform").then((p) => setIsMacOS(p === "macos"));
+    invoke<SetupStatus>("check_setup_status").then((s) => {
+      const tools = s.detected_tools;
+      const claude = tools.cli || tools.vscode || tools.jetbrains || tools.desktop;
+      setHasClaude(claude);
+      setHasCursor(tools.cursor);
+      // If only Cursor is detected, switch default tab
+      if (!claude && tools.cursor) {
+        setActiveTab("cursor");
+        setMountedTabs(new Set(["cursor"]));
+      }
+    }).catch(() => {});
   }, []);
 
   async function installCLI() {
@@ -162,39 +423,11 @@ export function AccountInfo() {
     }
   }
 
-  // Initial load
-  useEffect(() => {
-    load();
-  }, []);
-
-  // Auto-refresh timer
-  useEffect(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    if (autoRefresh) {
-      timerRef.current = setInterval(load, AUTO_REFRESH_INTERVAL_MS);
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [autoRefresh]);
-
-  // Tick every 30s to keep "Xm ago" fresh
-  useEffect(() => {
-    const timer = setInterval(() => setTick((n) => n + 1), 30_000);
-    return () => clearInterval(timer);
-  }, []);
-
   return (
     <div className={styles.container}>
       <button
         className={styles.toggle}
-        onClick={() => {
-          setExpanded((v) => !v);
-          if (!expanded && !info && !loading) load();
-        }}
+        onClick={() => setExpanded((v) => !v)}
       >
         <span className={styles.toggle_label}>{t("account.panel_title")}</span>
         <span className={styles.toggle_icon}>{expanded ? "▲" : "▼"}</span>
@@ -202,40 +435,34 @@ export function AccountInfo() {
 
       {expanded && (
         <div className={styles.panel}>
-          {loading && <p className={styles.dim}>{t("account.loading")}</p>}
-          {error && (
-            <div className={styles.error}>
-              <p>{error}</p>
-              {logPath && (
-                <p className={styles.log_hint}>
-                  {t("account.debug_log", { path: logPath })}
-                </p>
-              )}
-              <button className={styles.retry} onClick={load}>
-                {t("account.retry")}
+          {/* Tab bar — only show if multiple tools detected */}
+          {hasClaude && hasCursor && (
+            <div className={styles.tab_bar}>
+              <button
+                className={`${styles.tab_btn} ${activeTab === "claude" ? styles.tab_active : ""}`}
+                onClick={() => { setActiveTab("claude"); setMountedTabs((s) => new Set(s).add("claude")); }}
+              >
+                Claude Code
+              </button>
+              <button
+                className={`${styles.tab_btn} ${activeTab === "cursor" ? styles.tab_active : ""}`}
+                onClick={() => { setActiveTab("cursor"); setMountedTabs((s) => new Set(s).add("cursor")); }}
+              >
+                Cursor
               </button>
             </div>
           )}
-          {info && (
-            <>
-              <section className={styles.section}>
-                <div className={styles.section_title}>{t("account.title")}</div>
-                <Row label={t("account.auth")} value="Claude AI" />
-                <Row label={t("account.email")} value={info.email} />
-                <Row label={t("account.org")} value={info.organization_name} />
-                <Row label={t("account.plan")} value={info.plan} />
-              </section>
 
-              <section className={styles.section}>
-                <div className={styles.section_title}>{t("account.usage")}</div>
-                <UsageBar label={t("account.five_hour")} stats={info.five_hour} />
-                <UsageBar label={t("account.seven_day")} stats={info.seven_day} />
-                <UsageBar
-                  label={t("account.seven_day_sonnet")}
-                  stats={info.seven_day_sonnet}
-                />
-              </section>
-            </>
+          {/* Tab content — lazy-mount on first visit, then keep alive via CSS display */}
+          {hasClaude && (
+            <div style={{ display: activeTab === "claude" ? undefined : "none" }}>
+              {mountedTabs.has("claude") && <ClaudeCodeTab />}
+            </div>
+          )}
+          {hasCursor && (
+            <div style={{ display: activeTab === "cursor" ? undefined : "none" }}>
+              {mountedTabs.has("cursor") && <CursorTab />}
+            </div>
           )}
 
           <div className={styles.cli_section}>
@@ -246,32 +473,6 @@ export function AccountInfo() {
             >
               {t("account.ai_btn")}
             </button>
-          </div>
-
-          <div className={styles.footer}>
-            {lastUpdated && !loading && (
-              <span className={styles.last_updated}>
-                {formatLastUpdated(lastUpdated, t)}
-              </span>
-            )}
-            <div className={styles.footer_actions}>
-              <label className={styles.auto_toggle}>
-                <input
-                  type="checkbox"
-                  checked={autoRefresh}
-                  onChange={(e) => setAutoRefresh(e.target.checked)}
-                />
-                {t("account.auto_5m")}
-              </label>
-              <button
-                className={styles.refresh}
-                onClick={load}
-                disabled={loading}
-                title={t("account.refresh_now")}
-              >
-                ↻
-              </button>
-            </div>
           </div>
         </div>
       )}

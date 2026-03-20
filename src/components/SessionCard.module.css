@@ -196,7 +196,8 @@
 .tag_subagent,
 .tag_ide,
 .tag_model,
-.tag_thinking {
+.tag_thinking,
+.tag_source {
   font-size: 10px;
   padding: 1px 5px;
   border-radius: 4px;
@@ -208,6 +209,7 @@
 .tag_model   { background: var(--color-bg-secondary); color: var(--color-text-secondary); }
 .tag_thinking{ background: var(--thinking-toggle-bg); color: var(--thinking-label); display: inline-flex; align-items: center; }
 .tag_skill   { background: var(--tag-skill-bg); color: var(--tag-skill-fg); font-family: var(--font-mono); }
+.tag_source  { background: var(--color-bg-secondary); color: var(--color-text-dim); display: inline-flex; align-items: center; padding: 2px 5px; gap: 2px; }
 
 .slug {
   font-size: 10px;

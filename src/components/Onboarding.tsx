@@ -11,6 +11,7 @@ interface DetectedTools {
   vscode: boolean;
   jetbrains: boolean;
   desktop: boolean;
+  cursor: boolean;
 }
 
 interface SetupStatus {
@@ -352,7 +353,7 @@ export function Onboarding({ onDismiss }: { onDismiss: () => void }) {
         cli_installed: false,
         cli_path: null,
         claude_dir_exists: false,
-        detected_tools: { cli: false, vscode: false, jetbrains: false, desktop: false },
+        detected_tools: { cli: false, vscode: false, jetbrains: false, desktop: false, cursor: false },
         logged_in: false,
         has_sessions: false,
         credentials_valid: null,
@@ -388,9 +389,14 @@ export function Onboarding({ onDismiss }: { onDismiss: () => void }) {
   if (status) {
     const hasAnyClaude =
       status.cli_installed || status.claude_dir_exists || status.logged_in || status.has_sessions;
+    const hasCursor = status.detected_tools.cursor;
 
-    if (!hasAnyClaude) {
+    if (!hasAnyClaude && !hasCursor) {
+      // Neither Claude Code nor Cursor detected
       issues.push("no_claude_at_all");
+    } else if (!hasAnyClaude && hasCursor) {
+      // Cursor-only user — Claude Code login issues are not blockers.
+      // Skip login checks; they can use Fleet with Cursor sessions only.
     } else {
       if (!status.logged_in) issues.push("not_logged_in");
       if (status.logged_in && accountError) issues.push("credentials_invalid");

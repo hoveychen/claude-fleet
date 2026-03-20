@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { TextBlock } from "./blocks/TextBlock";
 import styles from "./MemoryPanel.module.css";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -241,7 +242,9 @@ function MemoryDetailModal({
                 <p className={styles.loading}>{t("memory.loading")}</p>
               )}
               {content !== null && (
-                <pre className={styles.content_pre}>{content}</pre>
+                <div className={styles.content_markdown}>
+                  <TextBlock text={content} />
+                </div>
               )}
             </>
           )}

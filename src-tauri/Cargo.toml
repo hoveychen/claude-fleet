@@ -35,3 +35,5 @@ rfd = "0.15"
 tiny_http = "0.12"
 percent-encoding = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+futures = "0.3"

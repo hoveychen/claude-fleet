@@ -14,15 +14,15 @@ use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
-use crate::account::AccountInfo;
 use crate::backend::Backend;
-use crate::session::{get_claude_dir, scan_sessions, SessionInfo};
+use crate::session::{get_claude_dir, SessionInfo};
 
 // ── Struct ────────────────────────────────────────────────────────────────────
 
 pub struct LocalBackend {
     app: AppHandle,
     sessions: Arc<Mutex<Vec<SessionInfo>>>,
+    cursor_cache: Arc<Mutex<Vec<SessionInfo>>>,
     viewed_session: Arc<Mutex<Option<String>>>,
     viewed_offset: Arc<Mutex<u64>>,
     /// Kept alive so the watcher thread keeps running.
@@ -35,13 +35,17 @@ impl LocalBackend {
         let sessions: Arc<Mutex<Vec<SessionInfo>>> = Arc::new(Mutex::new(Vec::new()));
         let viewed_session: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let viewed_offset: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
+        // Cached Cursor sessions — only refreshed by the polling thread.
+        let cursor_cache: Arc<Mutex<Vec<SessionInfo>>> = Arc::new(Mutex::new(Vec::new()));
 
         let claude_dir = get_claude_dir();
 
-        // Synchronous initial scan so list_sessions() is populated immediately
-        // after new() returns.
+        // Scan only Claude Code sessions synchronously (fast — filesystem only).
+        // Cursor sessions are loaded asynchronously by the polling thread below
+        // so the window appears without waiting on the SQLite query.
         if let Some(ref dir) = claude_dir {
-            let initial = scan_sessions(dir);
+            let mut initial = crate::session::scan_claude_sessions(dir);
+            crate::session::sort_sessions(&mut initial);
             *sessions.lock().unwrap() = initial.clone();
             let _ = app.emit("sessions-updated", &initial);
             crate::update_tray(&app, &initial);
@@ -60,9 +64,26 @@ impl LocalBackend {
         // Clone Arcs for the watcher thread.
         let app2 = app.clone();
         let sess2 = sessions.clone();
+        let cc2 = cursor_cache.clone();
         let vs = viewed_session.clone();
         let vo = viewed_offset.clone();
+
+        // Periodic rescan interval for Cursor sessions (state.vscdb is polled
+        // since SQLite changes can't be efficiently watched via notify).
+        let app3 = app.clone();
+        let sess3 = sessions.clone();
+        let cc3 = cursor_cache.clone();
+        let dir_poll = claude_dir.clone();
         let dir_thread = claude_dir;
+        std::thread::spawn(move || {
+            let Some(dir) = dir_poll else { return };
+            loop {
+                // First iteration runs immediately so Cursor sessions appear
+                // shortly after launch without blocking the initial Claude scan.
+                rescan_all_and_emit(&dir, &app3, &sess3, &cc3);
+                std::thread::sleep(Duration::from_secs(5));
+            }
+        });
 
         std::thread::spawn(move || {
             let Some(dir) = dir_thread else { return };
@@ -91,9 +112,9 @@ impl LocalBackend {
                     last_handled.insert(path_str.clone(), now);
 
                     match path.extension().and_then(|e| e.to_str()) {
-                        Some("lock") => rescan_and_emit(&dir, &app2, &sess2),
+                        Some("lock") => rescan_claude_and_emit(&dir, &app2, &sess2, &cc2),
                         Some("jsonl") => {
-                            rescan_and_emit(&dir, &app2, &sess2);
+                            rescan_claude_and_emit(&dir, &app2, &sess2, &cc2);
                             // If this is the currently-viewed session, tail new lines.
                             let viewed = vs.lock().unwrap().clone();
                             if let Some(ref vpath) = viewed {
@@ -111,6 +132,7 @@ impl LocalBackend {
         LocalBackend {
             app,
             sessions,
+            cursor_cache,
             viewed_session,
             viewed_offset,
             _watcher: watcher,
@@ -120,12 +142,39 @@ impl LocalBackend {
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
-fn rescan_and_emit(
+/// Rescan only Claude Code sessions (fast — filesystem only, no SQLite).
+/// Used by the file-watcher thread where we know only Claude files changed.
+fn rescan_claude_and_emit(
     dir: &std::path::Path,
     app: &AppHandle,
     sessions: &Arc<Mutex<Vec<SessionInfo>>>,
+    cursor_cache: &Arc<Mutex<Vec<SessionInfo>>>,
 ) {
-    let s = scan_sessions(dir);
+    let mut s = crate::session::scan_claude_sessions(dir);
+    // Merge cached cursor sessions without re-scanning SQLite.
+    s.extend(cursor_cache.lock().unwrap().clone());
+    crate::session::sort_sessions(&mut s);
+    *sessions.lock().unwrap() = s.clone();
+    let _ = app.emit("sessions-updated", &s);
+    crate::update_tray(app, &s);
+}
+
+/// Full rescan including Cursor sessions (heavier — reads SQLite + filesystem).
+/// Used by the periodic polling thread only.
+fn rescan_all_and_emit(
+    dir: &std::path::Path,
+    app: &AppHandle,
+    sessions: &Arc<Mutex<Vec<SessionInfo>>>,
+    cursor_cache: &Arc<Mutex<Vec<SessionInfo>>>,
+) {
+    let mut s = crate::session::scan_claude_sessions(dir);
+    // Rescan Cursor sessions and update cache
+    if let Some(cursor_dir) = crate::cursor::get_cursor_dir() {
+        let cursor_sessions = crate::cursor::scan_cursor_sessions(&cursor_dir);
+        *cursor_cache.lock().unwrap() = cursor_sessions.clone();
+        s.extend(cursor_sessions);
+    }
+    crate::session::sort_sessions(&mut s);
     *sessions.lock().unwrap() = s.clone();
     let _ = app.emit("sessions-updated", &s);
     crate::update_tray(app, &s);
@@ -169,6 +218,11 @@ impl Backend for LocalBackend {
     }
 
     fn get_messages(&self, path: &str) -> Result<Vec<Value>, String> {
+        // Cursor sessions use cursor:// URI scheme
+        if let Some(composer_id) = path.strip_prefix(crate::cursor::CURSOR_URI_PREFIX) {
+            return crate::cursor::get_cursor_messages(composer_id);
+        }
+
         let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         Ok(content
             .lines()
@@ -214,12 +268,13 @@ impl Backend for LocalBackend {
 
             let app = self.app.clone();
             let sessions = self.sessions.clone();
+            let cc = self.cursor_cache.clone();
             let dir = get_claude_dir();
 
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(500));
                 if let Some(ref d) = dir {
-                    rescan_and_emit(d, &app, &sessions);
+                    rescan_claude_and_emit(d, &app, &sessions, &cc);
                 }
                 std::thread::sleep(Duration::from_millis(1500));
                 for &p in pids.iter().rev() {
@@ -228,7 +283,7 @@ impl Backend for LocalBackend {
                     }
                 }
                 if let Some(ref d) = dir {
-                    rescan_and_emit(d, &app, &sessions);
+                    rescan_claude_and_emit(d, &app, &sessions, &cc);
                 }
             });
 
@@ -251,12 +306,13 @@ impl Backend for LocalBackend {
 
             let app = self.app.clone();
             let sessions = self.sessions.clone();
+            let cc = self.cursor_cache.clone();
             let dir = get_claude_dir();
 
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(500));
                 if let Some(ref d) = dir {
-                    rescan_and_emit(d, &app, &sessions);
+                    rescan_claude_and_emit(d, &app, &sessions, &cc);
                 }
             });
 
@@ -280,12 +336,13 @@ impl Backend for LocalBackend {
 
             let app = self.app.clone();
             let sessions = self.sessions.clone();
+            let cc = self.cursor_cache.clone();
             let dir = get_claude_dir();
 
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(500));
                 if let Some(ref d) = dir {
-                    rescan_and_emit(d, &app, &sessions);
+                    rescan_claude_and_emit(d, &app, &sessions, &cc);
                 }
                 std::thread::sleep(Duration::from_millis(1500));
                 for &p in pids.iter().rev() {
@@ -294,7 +351,7 @@ impl Backend for LocalBackend {
                     }
                 }
                 if let Some(ref d) = dir {
-                    rescan_and_emit(d, &app, &sessions);
+                    rescan_claude_and_emit(d, &app, &sessions, &cc);
                 }
             });
 
@@ -310,12 +367,13 @@ impl Backend for LocalBackend {
 
             let app = self.app.clone();
             let sessions = self.sessions.clone();
+            let cc = self.cursor_cache.clone();
             let dir = get_claude_dir();
 
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(500));
                 if let Some(ref d) = dir {
-                    rescan_and_emit(d, &app, &sessions);
+                    rescan_claude_and_emit(d, &app, &sessions, &cc);
                 }
             });
 
@@ -323,11 +381,39 @@ impl Backend for LocalBackend {
         }
     }
 
-    fn account_info(&self) -> Result<AccountInfo, String> {
-        crate::account::fetch_account_info()
+    fn account_info(&self) -> crate::backend::AccountInfoFuture {
+        Box::pin(crate::account::fetch_account_info())
+    }
+
+    fn check_setup(&self) -> crate::backend::SetupStatus {
+        let (cli_installed, cli_path) = crate::check_cli_installed();
+        let claude_dir_exists = dirs::home_dir()
+            .map(|h| h.join(".claude").is_dir())
+            .unwrap_or(false);
+        let sessions = self.sessions.lock().unwrap().clone();
+        let detected_tools = crate::detect_installed_tools(&sessions);
+        let logged_in = crate::account::read_keychain_credentials().is_ok();
+        let has_sessions = !sessions.is_empty();
+
+        crate::backend::SetupStatus {
+            cli_installed,
+            cli_path,
+            claude_dir_exists,
+            detected_tools,
+            logged_in,
+            has_sessions,
+            credentials_valid: None,
+        }
     }
 
     fn start_watch(&self, path: String) -> Result<u64, String> {
+        // Cursor sessions don't have a file to tail — messages come from SQLite
+        if path.starts_with(crate::cursor::CURSOR_URI_PREFIX) {
+            *self.viewed_session.lock().unwrap() = Some(path);
+            *self.viewed_offset.lock().unwrap() = 0;
+            return Ok(0);
+        }
+
         let size = std::fs::metadata(&path)
             .map(|m| m.len())
             .map_err(|e| e.to_string())?;

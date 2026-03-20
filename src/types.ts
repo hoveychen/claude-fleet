@@ -33,6 +33,7 @@ export interface SessionInfo {
   pid: number | null;
   pidPrecise: boolean;
   lastSkill: string | null;
+  agentSource: "claude-code" | "cursor";
 }
 
 export interface SkillInvocation {

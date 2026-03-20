@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use claude_fleet_lib::account::{fetch_account_info, AccountInfo, UsageStats};
+use claude_fleet_lib::account::{fetch_account_info_blocking as fetch_account_info, AccountInfo, UsageStats};
 use claude_fleet_lib::memory;
 use claude_fleet_lib::session::{get_claude_dir, scan_sessions, SessionInfo, SessionStatus};
 use claude_fleet_lib::{FLEET_SKILL_MD, SKILL_TARGETS};
@@ -185,6 +185,15 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// List and view agent memories across all workspaces
+    #[command(alias = "mem")]
+    Memory {
+        /// Show content of a specific memory file (workspace/filename or full path)
+        file: Option<String>,
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Start the HTTP probe server (used by Fleet app for remote monitoring)
     Serve {
         /// Port to listen on
@@ -234,6 +243,7 @@ fn main() {
         Commands::Stop { id, force } => cmd_stop(&id, force),
         Commands::Account { json } => cmd_account(json),
         Commands::Speed { json } => cmd_speed(json),
+        Commands::Memory { file, json } => cmd_memory(file, json),
         Commands::Serve { port, token } => cmd_serve(port, token),
         Commands::Skill { action } => match action {
             SkillCommands::Install => cmd_skill_install(),
@@ -750,6 +760,152 @@ fn print_account(info: &AccountInfo) {
     }
 }
 
+// ── fleet memory ──────────────────────────────────────────────────────────────
+
+fn cmd_memory(file: Option<String>, as_json: bool) {
+    let memories = memory::scan_all_memories();
+
+    // If a specific file is requested, show its content
+    if let Some(ref query) = file {
+        // Try to find matching file: either by "workspace/filename" or path substring
+        let mut found: Option<&memory::MemoryFile> = None;
+        let mut found_ws: Option<&str> = None;
+
+        for ws in &memories {
+            for f in &ws.files {
+                // Match by "workspace/filename"
+                let ws_file = format!("{}/{}", ws.workspace_name, f.name);
+                if ws_file == *query || f.name == *query || f.path.contains(query.as_str()) {
+                    if found.is_some() && f.name != *query {
+                        eprintln!(
+                            "{}Error:{} ambiguous match '{}' — use workspace/filename to disambiguate",
+                            "\x1b[31m", c_reset(), query
+                        );
+                        // List matches
+                        for ws2 in &memories {
+                            for f2 in &ws2.files {
+                                let ws_file2 = format!("{}/{}", ws2.workspace_name, f2.name);
+                                if ws_file2 == *query
+                                    || f2.name == *query
+                                    || f2.path.contains(query.as_str())
+                                {
+                                    eprintln!("  {}/{}", ws2.workspace_name, f2.name);
+                                }
+                            }
+                        }
+                        std::process::exit(1);
+                    }
+                    found = Some(f);
+                    found_ws = Some(&ws.workspace_name);
+                }
+            }
+        }
+
+        match found {
+            Some(f) => {
+                match memory::read_memory_file(&f.path) {
+                    Ok(content) => {
+                        if as_json {
+                            let obj = serde_json::json!({
+                                "workspace": found_ws.unwrap_or(""),
+                                "name": f.name,
+                                "path": f.path,
+                                "content": content,
+                            });
+                            println!("{}", serde_json::to_string_pretty(&obj).unwrap());
+                        } else {
+                            println!(
+                                "{}{}  {}/{}{}",
+                                c_bold(),
+                                "\x1b[36m",
+                                found_ws.unwrap_or(""),
+                                f.name,
+                                c_reset()
+                            );
+                            println!("{}{}{}", c_dim(), "─".repeat(60), c_reset());
+                            println!("{}", content);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("{}Error:{} {}", "\x1b[31m", c_reset(), e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            None => {
+                eprintln!(
+                    "{}Error:{} no memory file matching '{}'",
+                    "\x1b[31m",
+                    c_reset(),
+                    query
+                );
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    // List all memories
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&memories).unwrap());
+        return;
+    }
+
+    if memories.is_empty() {
+        println!("{}No memories found.{}", c_dim(), c_reset());
+        return;
+    }
+
+    let total_files: usize = memories.iter().map(|w| w.files.len()).sum();
+    println!(
+        "{}Memories{} — {} workspace(s), {} file(s)\n",
+        c_bold(),
+        c_reset(),
+        memories.len(),
+        total_files
+    );
+
+    for ws in &memories {
+        print!(
+            "{}{}{}",
+            c_bold(),
+            ws.workspace_name,
+            c_reset()
+        );
+        if ws.has_claude_md {
+            print!("  {}\x1b[33mCLAUDE.md\x1b[0m{}", "", c_reset());
+        }
+        println!();
+
+        for f in &ws.files {
+            let size = if f.size_bytes < 1024 {
+                format!("{}B", f.size_bytes)
+            } else {
+                format!("{:.1}K", f.size_bytes as f64 / 1024.0)
+            };
+            let age = format_age_ms(f.modified_ms);
+            let name_style = if f.name == "MEMORY.md" {
+                c_bold()
+            } else {
+                ""
+            };
+            let name_reset = if f.name == "MEMORY.md" {
+                c_reset()
+            } else {
+                ""
+            };
+            println!(
+                "  {}{}{}{} {:>6}  {}{}{}",
+                name_style, f.name, name_reset,
+                "",
+                size,
+                c_dim(), age, c_reset()
+            );
+        }
+        println!();
+    }
+}
+
 // ── fleet serve ────────────────────────────────────────────────────────────────
 
 fn cmd_serve(port: u16, token: String) {
@@ -894,6 +1050,30 @@ fn cmd_serve(port: u16, token: String) {
                         );
                     }
                 }
+            }
+
+            "/setup-status" => {
+                let claude_dir = get_claude_dir();
+                let sessions = claude_dir.as_ref().map(|d| scan_sessions(d)).unwrap_or_default();
+                let detected_tools = claude_fleet_lib::detect_installed_tools(&sessions);
+                let (cli_installed, cli_path) = claude_fleet_lib::check_cli_installed();
+                let claude_dir_exists = claude_dir.as_ref().map_or(false, |d| d.is_dir());
+                let logged_in = claude_fleet_lib::account::read_keychain_credentials().is_ok();
+                let has_sessions = !sessions.is_empty();
+
+                let status = claude_fleet_lib::backend::SetupStatus {
+                    cli_installed,
+                    cli_path,
+                    claude_dir_exists,
+                    detected_tools,
+                    logged_in,
+                    has_sessions,
+                    credentials_valid: None,
+                };
+                let body = serde_json::to_string(&status).unwrap_or_default();
+                let _ = request.respond(
+                    tiny_http::Response::from_string(body).with_header(json_header),
+                );
             }
 
             "/messages" => {

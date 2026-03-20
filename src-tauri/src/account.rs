@@ -215,39 +215,46 @@ fn parse_usage(v: &Value) -> Option<UsageStats> {
 
 // ── Account info fetch ────────────────────────────────────────────────────────
 
-pub fn fetch_account_info() -> Result<AccountInfo, String> {
+pub async fn fetch_account_info() -> Result<AccountInfo, String> {
     let (token, subscription_type) = read_keychain_credentials()?;
 
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let auth_header = format!("Bearer {}", token);
     let beta = "oauth-2025-04-20";
 
-    let profile_raw = client
+    // Fire both requests concurrently
+    let profile_fut = client
         .get("https://api.anthropic.com/api/oauth/profile")
         .header("Authorization", &auth_header)
         .header("anthropic-beta", beta)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .map_err(|e| format!("Profile request failed: {e}"))?;
+        .timeout(std::time::Duration::from_secs(5))
+        .send();
+
+    let usage_fut = client
+        .get("https://api.anthropic.com/api/oauth/usage")
+        .header("Authorization", &auth_header)
+        .header("anthropic-beta", beta)
+        .header("Content-Type", "application/json")
+        .timeout(std::time::Duration::from_secs(5))
+        .send();
+
+    let (profile_res, usage_res) = futures::future::join(profile_fut, usage_fut).await;
+
+    let profile_raw = profile_res.map_err(|e| format!("Profile request failed: {e}"))?;
     let profile_status = profile_raw.status();
     let profile_body = profile_raw
         .json::<Value>()
+        .await
         .map_err(|e| format!("Profile parse failed: {e}"))?;
     if !profile_status.is_success() {
         return Err(format!("Profile API error {profile_status}: {profile_body}"));
     }
 
-    let usage_raw = client
-        .get("https://api.anthropic.com/api/oauth/usage")
-        .header("Authorization", &auth_header)
-        .header("anthropic-beta", beta)
-        .header("Content-Type", "application/json")
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .map_err(|e| format!("Usage request failed: {e}"))?;
+    let usage_raw = usage_res.map_err(|e| format!("Usage request failed: {e}"))?;
     let usage_status = usage_raw.status();
     let usage_body = usage_raw
         .json::<Value>()
+        .await
         .map_err(|e| format!("Usage parse failed: {e}"))?;
     if !usage_status.is_success() {
         return Err(format!("Usage API error {usage_status}: {usage_body}"));
@@ -335,4 +342,9 @@ pub fn fetch_account_info() -> Result<AccountInfo, String> {
         seven_day,
         seven_day_sonnet,
     })
+}
+
+/// Blocking wrapper for use in the fleet CLI (no async runtime available).
+pub fn fetch_account_info_blocking() -> Result<AccountInfo, String> {
+    futures::executor::block_on(fetch_account_info())
 }

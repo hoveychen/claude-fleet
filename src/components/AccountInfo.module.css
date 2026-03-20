@@ -41,6 +41,35 @@
   gap: 10px;
 }
 
+.tab_bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 2px;
+}
+
+.tab_btn {
+  flex: 1;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-dim);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab_btn:hover {
+  color: var(--color-text);
+}
+
+.tab_active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
 .section {
   display: flex;
   flex-direction: column;
@@ -490,4 +519,31 @@
 
 .modal_close_btn:hover {
   background: var(--color-bg-secondary);
+}
+
+/* ── Cursor daily stats table ──────────────────────────────────────────────── */
+
+.stats_table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.stats_table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-text-dim);
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.stats_table td {
+  color: var(--color-text);
+  padding: 3px 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats_table tr:not(:last-child) td {
+  border-bottom: 1px solid var(--color-border);
 }

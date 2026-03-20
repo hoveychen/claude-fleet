@@ -108,8 +108,28 @@ impl crate::backend::Backend for RemoteBackend {
         remote_kill_workspace(&self.base_url, &self.token, &workspace_path)
     }
 
-    fn account_info(&self) -> Result<crate::account::AccountInfo, String> {
-        remote_get_account_info(&self.base_url, &self.token)
+    fn account_info(&self) -> crate::backend::AccountInfoFuture {
+        let base_url = self.base_url.clone();
+        let token = self.token.clone();
+        Box::pin(async move {
+            remote_get_account_info(&base_url, &token)
+        })
+    }
+
+    fn check_setup(&self) -> crate::backend::SetupStatus {
+        remote_check_setup_status(&self.base_url, &self.token)
+            .unwrap_or_else(|e| {
+                crate::log_debug(&format!("remote check_setup failed: {e}"));
+                crate::backend::SetupStatus {
+                    cli_installed: false,
+                    cli_path: None,
+                    claude_dir_exists: false,
+                    detected_tools: crate::backend::DetectedTools::default(),
+                    logged_in: false,
+                    has_sessions: !self.sessions.lock().unwrap().is_empty(),
+                    credentials_valid: None,
+                }
+            })
     }
 
     fn start_watch(&self, path: String) -> Result<u64, String> {
@@ -925,6 +945,27 @@ pub fn remote_get_account_info(
         return Err(format!("Remote account error: HTTP {}", resp.status()));
     }
     resp.json::<crate::account::AccountInfo>().map_err(|e| e.to_string())
+}
+
+/// GET `{base_url}/setup-status` and return remote setup status.
+fn remote_check_setup_status(
+    base_url: &str,
+    token: &str,
+) -> Result<crate::backend::SetupStatus, String> {
+    let url = format!("{}/setup-status", base_url);
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("Remote setup-status error: HTTP {}", resp.status()));
+    }
+    resp.json::<crate::backend::SetupStatus>().map_err(|e| e.to_string())
 }
 
 /// GET `{base_url}/messages?path=<encoded>` and return raw JSON values.

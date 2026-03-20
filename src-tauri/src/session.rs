@@ -66,6 +66,8 @@ pub struct SessionInfo {
     /// a matching --resume flag — stopping may affect sibling sessions.
     pub pid_precise: bool,
     pub last_skill: Option<String>,
+    /// Source of this session: "claude-code" or "cursor"
+    pub agent_source: String,
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -597,6 +599,7 @@ fn parse_session_info(
         pid,
         pid_precise,
         last_skill,
+        agent_source: "claude-code".to_string(),
     })
 }
 
@@ -612,7 +615,7 @@ struct SubagentMeta {
     thinking_level: Option<String>,
 }
 
-pub fn scan_sessions(claude_dir: &Path) -> Vec<SessionInfo> {
+pub fn scan_claude_sessions(claude_dir: &Path) -> Vec<SessionInfo> {
     let mut sessions = Vec::new();
     let ide_sessions = scan_ide_sessions(claude_dir);
     let cli_processes = scan_cli_processes();
@@ -819,5 +822,46 @@ pub fn scan_sessions(claude_dir: &Path) -> Vec<SessionInfo> {
             .then(a.created_at_ms.cmp(&b.created_at_ms))
     });
 
+    sessions
+}
+
+/// Sort sessions: active first, then by created_at_ms asc.
+pub fn sort_sessions(sessions: &mut Vec<SessionInfo>) {
+    sessions.sort_by(|a, b| {
+        let a_active = matches!(
+            a.status,
+            SessionStatus::Thinking
+                | SessionStatus::Executing
+                | SessionStatus::Streaming
+                | SessionStatus::Delegating
+                | SessionStatus::Processing
+                | SessionStatus::WaitingInput
+        );
+        let b_active = matches!(
+            b.status,
+            SessionStatus::Thinking
+                | SessionStatus::Executing
+                | SessionStatus::Streaming
+                | SessionStatus::Delegating
+                | SessionStatus::Processing
+                | SessionStatus::WaitingInput
+        );
+        b_active
+            .cmp(&a_active)
+            .then(a.created_at_ms.cmp(&b.created_at_ms))
+    });
+}
+
+/// Scan all agent sources and merge into a single sorted list.
+pub fn scan_sessions(claude_dir: &Path) -> Vec<SessionInfo> {
+    let mut sessions = scan_claude_sessions(claude_dir);
+
+    // Merge Cursor sessions
+    if let Some(cursor_dir) = crate::cursor::get_cursor_dir() {
+        let cursor_sessions = crate::cursor::scan_cursor_sessions(&cursor_dir);
+        sessions.extend(cursor_sessions);
+    }
+
+    sort_sessions(&mut sessions);
     sessions
 }

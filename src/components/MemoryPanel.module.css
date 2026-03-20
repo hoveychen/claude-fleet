@@ -223,14 +223,11 @@
 
 /* ── Content tab ──────────────────────────────────────────────────────────── */
 
-.content_pre {
+.content_markdown {
   font-size: 12px;
   line-height: 1.6;
   color: var(--color-text);
-  white-space: pre-wrap;
   word-break: break-word;
-  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
-  margin: 0;
 }
 
 /* ── History tab ──────────────────────────────────────────────────────────── */

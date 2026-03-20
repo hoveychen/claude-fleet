@@ -1,5 +1,6 @@
 pub mod account;
 pub mod backend;
+pub mod cursor;
 pub mod local_backend;
 pub mod memory;
 pub mod remote;
@@ -8,13 +9,13 @@ pub mod session;
 use std::fs;
 use std::sync::{Arc, Mutex};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 
-use account::{AccountInfo, read_keychain_credentials};
+use account::AccountInfo;
 use backend::Backend;
 use session::SessionInfo;
 
@@ -53,61 +54,25 @@ fn log_debug(msg: &str) {
 
 // ── Setup status check ───────────────────────────────────────────────────────
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct DetectedTools {
-    pub cli: bool,
-    pub vscode: bool,
-    pub jetbrains: bool,
-    pub desktop: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct SetupStatus {
-    pub cli_installed: bool,
-    pub cli_path: Option<String>,
-    pub claude_dir_exists: bool,
-    pub detected_tools: DetectedTools,
-    pub logged_in: bool,
-    pub has_sessions: bool,
-    pub credentials_valid: Option<bool>,
-}
-
 #[tauri::command]
-fn check_setup_status(state: tauri::State<AppState>) -> SetupStatus {
-    let (cli_installed, cli_path) = check_cli_installed();
-
-    let claude_dir_exists = dirs::home_dir()
-        .map(|h| h.join(".claude").is_dir())
-        .unwrap_or(false);
-
-    let sessions = state.backend.lock().unwrap().list_sessions();
-    let detected_tools = detect_installed_tools(&sessions);
-    let logged_in = read_keychain_credentials().is_ok();
-    let has_sessions = !sessions.is_empty();
-
-    SetupStatus {
-        cli_installed,
-        cli_path,
-        claude_dir_exists,
-        detected_tools,
-        logged_in,
-        has_sessions,
-        credentials_valid: None,
-    }
+fn check_setup_status(state: tauri::State<AppState>) -> backend::SetupStatus {
+    state.backend.lock().unwrap().check_setup()
 }
 
-fn detect_installed_tools(sessions: &[SessionInfo]) -> DetectedTools {
+/// Detect which Claude-related tools are installed on the local machine.
+/// Used by LocalBackend and fleet serve.
+pub fn detect_installed_tools(sessions: &[SessionInfo]) -> backend::DetectedTools {
     let home = dirs::home_dir();
 
     // CLI: already checked via PATH / common paths
     let (cli, _) = check_cli_installed();
 
     // VS Code extension: check ~/.vscode/extensions/ and ~/.vscode-insiders/extensions/
+    // (excludes ~/.cursor — that's tracked separately)
     let vscode = home.as_ref().map_or(false, |h| {
         let ext_dirs = [
             h.join(".vscode").join("extensions"),
             h.join(".vscode-insiders").join("extensions"),
-            h.join(".cursor").join("extensions"),
         ];
         ext_dirs.iter().any(|dir| {
             dir.is_dir() && fs::read_dir(dir).map_or(false, |entries| {
@@ -119,9 +84,13 @@ fn detect_installed_tools(sessions: &[SessionInfo]) -> DetectedTools {
     }) || sessions.iter().any(|s| {
         s.ide_name.as_deref().map_or(false, |name| {
             let n = name.to_lowercase();
-            n.contains("vscode") || n.contains("vs code") || n.contains("cursor")
+            n.contains("vscode") || n.contains("vs code")
         })
     });
+
+    // Cursor IDE: check ~/.cursor directory or cursor sessions
+    let cursor = cursor::get_cursor_dir().map_or(false, |d| d.is_dir())
+        || sessions.iter().any(|s| s.agent_source == "cursor");
 
     // JetBrains: check live sessions for JetBrains IDE names
     let jetbrains = sessions.iter().any(|s| {
@@ -147,10 +116,10 @@ fn detect_installed_tools(sessions: &[SessionInfo]) -> DetectedTools {
         { false }
     };
 
-    DetectedTools { cli, vscode, jetbrains, desktop }
+    backend::DetectedTools { cli, vscode, jetbrains, desktop, cursor }
 }
 
-fn check_cli_installed() -> (bool, Option<String>) {
+pub fn check_cli_installed() -> (bool, Option<String>) {
     // Try `which claude` (unix) or `where claude` (windows)
     #[cfg(unix)]
     let cmd = "which";
@@ -184,12 +153,18 @@ fn check_cli_installed() -> (bool, Option<String>) {
 }
 
 #[tauri::command]
-fn get_account_info(state: tauri::State<AppState>) -> Result<AccountInfo, String> {
+async fn get_account_info(state: tauri::State<'_, AppState>) -> Result<AccountInfo, String> {
     log_debug("get_account_info: start");
-    state.backend.lock().unwrap().account_info().map_err(|e| {
+    let fut = state.backend.lock().unwrap().account_info();
+    fut.await.map_err(|e| {
         log_debug(&format!("get_account_info: error: {e}"));
         e
     })
+}
+
+#[tauri::command]
+async fn get_cursor_account_info() -> Result<cursor::CursorAccountInfo, String> {
+    cursor::fetch_cursor_account_info().await
 }
 
 // ── Process kill ──────────────────────────────────────────────────────────────
@@ -610,6 +585,7 @@ pub fn run() {
             remote::connect_remote,
             remote::disconnect_remote,
             pick_file,
+            get_cursor_account_info,
             list_memories,
             get_memory_content,
             get_memory_history,

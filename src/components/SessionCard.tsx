@@ -50,6 +50,25 @@ export function SubagentTypeIcon({ type }: { type: string | null }) {
   }
 }
 
+// ── Agent source icons ───────────────────────────────────────────────────────
+
+export function ClaudeIcon() {
+  // Anthropic "A" spark mark
+  return (
+    <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor" aria-hidden>
+      <path d="M7.5 1.5L11 10.5H8.8L6 3.5L3.2 10.5H1L4.5 1.5H7.5Z" opacity="0.85" />
+    </svg>
+  );
+}
+
+export function CursorIcon() {
+  return (
+    <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor" aria-hidden>
+      <path d="M2 1L10 6L6 7L5 11L2 1Z" opacity="0.85" />
+    </svg>
+  );
+}
+
 // ── Status icon ───────────────────────────────────────────────────────────────
 
 export function StatusIcon({ status }: { status: SessionStatus }) {
@@ -236,7 +255,7 @@ export function SessionCard({ session, isSelected, onClick, variant, hideHeader 
       <div className={`${styles.header} ${hideHeader ? styles.header_compact : ""}`}>
         {!hideHeader && <span className={styles.workspace}>{session.workspaceName}</span>}
         {!hideHeader && <StatusBadge status={session.status} />}
-        {isActive && session.pid !== null && !session.isSubagent && (
+        {isActive && session.pid !== null && !session.isSubagent && session.agentSource !== "cursor" && (
           <button
             className={`${styles.stop_btn} ${killing ? styles.stop_btn_killing : ""} ${!session.pidPrecise ? styles.stop_btn_warn : ""}`}
             onClick={handleStop}
@@ -257,6 +276,9 @@ export function SessionCard({ session, isSelected, onClick, variant, hideHeader 
         ) : (
           <span className={styles.tag_main} title={t("card.tip_main")}>◈ {t("main")}</span>
         )}
+        <span className={styles.tag_source} title={session.agentSource === "cursor" ? "Cursor" : "Claude Code"}>
+          {session.agentSource === "cursor" ? <CursorIcon /> : <ClaudeIcon />}
+        </span>
         {session.ideName && (
           <span className={styles.tag_ide} title={t("card.tip_ide", { name: session.ideName })}>{session.ideName}</span>
         )}

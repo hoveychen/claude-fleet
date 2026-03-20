@@ -3,17 +3,62 @@
 //! so that all Tauri command handlers can be written as simple delegations with
 //! no `if remote { … } else { … }` branching.
 
+use std::future::Future;
+use std::pin::Pin;
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
 use crate::account::AccountInfo;
 use crate::memory::{MemoryHistoryEntry, WorkspaceMemory};
 use crate::session::SessionInfo;
-use serde_json::Value;
+
+// ── Shared types ─────────────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DetectedTools {
+    pub cli: bool,
+    pub vscode: bool,
+    pub jetbrains: bool,
+    pub desktop: bool,
+    pub cursor: bool,
+}
+
+impl Default for DetectedTools {
+    fn default() -> Self {
+        DetectedTools {
+            cli: false,
+            vscode: false,
+            jetbrains: false,
+            desktop: false,
+            cursor: false,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SetupStatus {
+    pub cli_installed: bool,
+    pub cli_path: Option<String>,
+    pub claude_dir_exists: bool,
+    pub detected_tools: DetectedTools,
+    pub logged_in: bool,
+    pub has_sessions: bool,
+    pub credentials_valid: Option<bool>,
+}
+
+// ── Backend trait ─────────────────────────────────────────────────────────────
+
+/// A boxed, Send future returning `Result<AccountInfo, String>`.
+pub type AccountInfoFuture = Pin<Box<dyn Future<Output = Result<AccountInfo, String>> + Send>>;
 
 pub trait Backend: Send + Sync {
     fn list_sessions(&self) -> Vec<SessionInfo>;
     fn get_messages(&self, path: &str) -> Result<Vec<Value>, String>;
     fn kill_pid(&self, pid: u32) -> Result<(), String>;
     fn kill_workspace(&self, workspace_path: String) -> Result<(), String>;
-    fn account_info(&self) -> Result<AccountInfo, String>;
+    fn account_info(&self) -> AccountInfoFuture;
+    fn check_setup(&self) -> SetupStatus;
     /// Start tailing a session file for new lines.
     /// Returns the initial byte offset (file size at call time).
     /// New lines are delivered as `session-tail` Tauri events.
@@ -45,8 +90,19 @@ impl Backend for NullBackend {
     fn kill_workspace(&self, _: String) -> Result<(), String> {
         Err("backend not ready".into())
     }
-    fn account_info(&self) -> Result<AccountInfo, String> {
-        Err("backend not ready".into())
+    fn account_info(&self) -> AccountInfoFuture {
+        Box::pin(async { Err("backend not ready".into()) })
+    }
+    fn check_setup(&self) -> SetupStatus {
+        SetupStatus {
+            cli_installed: false,
+            cli_path: None,
+            claude_dir_exists: false,
+            detected_tools: DetectedTools::default(),
+            logged_in: false,
+            has_sessions: false,
+            credentials_valid: None,
+        }
     }
     fn start_watch(&self, _: String) -> Result<u64, String> {
         Err("backend not ready".into())
