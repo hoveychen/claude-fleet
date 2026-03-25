@@ -87,7 +87,18 @@ jobs:
                 xcrun notarytool log "$SUB_ID" \
                   --apple-id "$APPLE_ID" \
                   --password "$APPLE_PASSWORD" \
+                  --team-id "$APPLE_TEAM_ID" \
+                  notarize-log.json || true
+                echo "── Notarization detailed log:"
+                cat notarize-log.json 2>/dev/null || echo "(no log available)"
+                echo ""
+                echo "── Notarization info:"
+                xcrun notarytool info "$SUB_ID" \
+                  --apple-id "$APPLE_ID" \
+                  --password "$APPLE_PASSWORD" \
                   --team-id "$APPLE_TEAM_ID" || true
+              else
+                echo "(could not extract submission ID)"
               fi
               exit 1
             fi
