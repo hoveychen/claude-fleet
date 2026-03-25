@@ -32,9 +32,9 @@ jobs:
       matrix:
         include:
           - name: Apple Silicon
-            arch_pattern: '*aarch64*.dmg'
+            arch_pattern: '*macos-arm64*.dmg'
           - name: Intel
-            arch_pattern: '*x64*.dmg'
+            arch_pattern: '*macos-x64*.dmg'
 
     steps:
       - name: Resolve tag
@@ -65,6 +65,7 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          set -o pipefail
           for dmg in dmg-work/*.dmg; do
             echo "── Submitting $(basename "$dmg") for notarization..."
             xcrun notarytool submit "$dmg" \
@@ -74,12 +75,14 @@ jobs:
               --wait \
               --timeout 15m \
               2>&1 | tee notarize-output.log
+            NOTARY_EXIT=$?
 
-            # If notarization failed, fetch the detailed log
-            if [ $? -ne 0 ]; then
-              echo "── Notarization failed. Fetching log..."
-              # Extract submission ID from output
-              SUB_ID=$(grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' notarize-output.log | head -1)
+            # Extract submission ID for log fetching
+            SUB_ID=$(grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' notarize-output.log | head -1)
+
+            # Check for rejection or failure (notarytool may exit 0 even on Rejected)
+            if [ $NOTARY_EXIT -ne 0 ] || grep -q "status: Rejected\|status: Invalid" notarize-output.log; then
+              echo "── Notarization failed or rejected. Fetching detailed log..."
               if [ -n "$SUB_ID" ]; then
                 xcrun notarytool log "$SUB_ID" \
                   --apple-id "$APPLE_ID" \

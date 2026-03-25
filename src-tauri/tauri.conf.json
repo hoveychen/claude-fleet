@@ -36,7 +36,7 @@
     "resources": ["resources/*"],
     "macOS": {
       "minimumSystemVersion": "10.15",
-      "entitlements": null,
+      "entitlements": "entitlements.plist",
       "exceptionDomain": null,
       "frameworks": []
     },
