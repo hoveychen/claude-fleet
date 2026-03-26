@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ClaudeIcon, CursorIcon, CodexIcon, OpenClawIcon } from "./SessionCard";
 import styles from "./UsagePanel.module.css";
 
 const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
@@ -283,7 +284,7 @@ function ClaudeUsageSection() {
 
   return (
     <div className={styles.tool_section}>
-      <div className={styles.tool_header}>Claude Code</div>
+      <div className={styles.tool_header}><ClaudeIcon /> Claude Code</div>
       {loading && !info && <p className={styles.dim}>{t("account.loading")}</p>}
       {error && (
         <div className={styles.error}>
@@ -351,7 +352,7 @@ function CursorUsageSection() {
 
   return (
     <div className={styles.tool_section}>
-      <div className={styles.tool_header}>Cursor</div>
+      <div className={styles.tool_header}><CursorIcon /> Cursor</div>
       {loading && !info && <p className={styles.dim}>{t("account.loading")}</p>}
       {error && (
         <div className={styles.error}>
@@ -422,7 +423,7 @@ function CodexUsageSection() {
   return (
     <div className={styles.tool_section}>
       <div className={styles.tool_header}>
-        Codex
+        <CodexIcon /> Codex
         {data?.planType && <span className={styles.plan_badge}>{data.planType}</span>}
       </div>
       {loading && !data && <p className={styles.dim}>{t("account.loading")}</p>}
@@ -552,7 +553,7 @@ function OpenClawUsageSection() {
 
   return (
     <div className={styles.tool_section}>
-      <div className={styles.tool_header}>OpenClaw</div>
+      <div className={styles.tool_header}><OpenClawIcon /> OpenClaw</div>
       {loading && !data && <p className={styles.dim}>{t("account.loading")}</p>}
       {error && (
         <div className={styles.error}>

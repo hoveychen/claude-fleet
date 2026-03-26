@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import { setItem } from "../storage";
 import styles from "./LanguageSwitcher.module.css";
 
@@ -15,6 +16,7 @@ export function LanguageSwitcher() {
     i18n.changeLanguage(code);
     setItem("lang", code);
     invoke("set_locale", { locale: code }).catch(() => {});
+    emit("overlay-lang-changed", code).catch(() => {});
   };
 
   return (

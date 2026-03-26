@@ -17,7 +17,7 @@ use serde_json::Value;
 
 use crate::agent_source::{AgentSource, WatchStrategy};
 use crate::backend::SourceUsageSummary;
-use crate::session::{SessionInfo, SessionStatus};
+use crate::session::{SessionInfo, SessionStatus, extract_last_context_usage, compute_context_percent};
 
 /// URI prefix for OpenClaw session identifiers.
 const OPENCLAW_URI_PREFIX: &str = "openclaw://";
@@ -380,6 +380,8 @@ fn parse_openclaw_session(
         pid,
         pid_precise: pid.is_some(),
         last_skill: None,
+        context_percent: extract_last_context_usage(&all_lines)
+            .and_then(|(used, m)| compute_context_percent(used, Some(&m))),
         agent_source: "openclaw".to_string(),
         last_outcome: None,
     })

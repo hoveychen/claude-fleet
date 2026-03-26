@@ -8,6 +8,13 @@
   display: flex;
   align-items: center;
   width: 100%;
+  gap: 0;
+}
+
+.toggle_btn {
+  display: flex;
+  align-items: center;
+  flex: 1;
   background: none;
   border: none;
   padding: 6px 10px;
@@ -19,7 +26,7 @@
   gap: 4px;
 }
 
-.toggle:hover {
+.toggle_btn:hover {
   color: var(--color-text);
 }
 
@@ -31,6 +38,79 @@
 .toggle_icon {
   font-size: 8px;
   opacity: 0.6;
+}
+
+.popout_btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-dim);
+  opacity: 0.5;
+  transition: opacity 0.15s, color 0.15s;
+  border-radius: 4px;
+  margin-right: 4px;
+}
+
+.popout_btn:hover {
+  opacity: 1;
+  color: var(--color-text);
+  background: var(--color-bg-card-hover);
+}
+
+/* Overlay active — placeholder with "find" and "recall" buttons */
+.overlayPlaceholder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.findBtn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 12px;
+  background: var(--color-bg-card);
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--color-text-dim);
+  font-size: 11px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.findBtn:hover {
+  background: var(--color-bg-card-hover);
+  color: var(--color-text);
+  border-color: var(--color-text-dim);
+}
+
+.recallBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--color-text-dim);
+  opacity: 0.7;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+
+.recallBtn:hover {
+  opacity: 1;
+  color: var(--color-text);
+  background: var(--color-bg-card-hover);
 }
 
 .mascot {
@@ -464,10 +544,10 @@
   background: var(--mascot-bubble-bg, rgba(255, 255, 255, 0.12));
   border: 1px solid var(--mascot-bubble-border, rgba(255, 255, 255, 0.15));
   border-radius: 12px;
-  padding: 5px 10px;
-  margin: 0 8px 4px;
+  padding: 6px 12px;
+  margin: 4px 10px 6px;
   animation: quipFadeIn 0.5s ease;
-  max-width: calc(100% - 16px);
+  max-width: calc(100% - 20px);
 }
 
 /* Tail pointing down */
@@ -481,7 +561,7 @@
   height: 0;
   border-left: 6px solid transparent;
   border-right: 6px solid transparent;
-  border-top: 6px solid var(--mascot-bubble-bg, rgba(255, 255, 255, 0.12));
+  border-top: 6px solid var(--mascot-bubble-bg);
 }
 
 /* Tail border trick */
@@ -495,11 +575,11 @@
   height: 0;
   border-left: 7px solid transparent;
   border-right: 7px solid transparent;
-  border-top: 7px solid var(--mascot-bubble-border, rgba(255, 255, 255, 0.15));
+  border-top: 7px solid var(--mascot-bubble-border);
 }
 
 .quip {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--mascot-text);
   text-align: center;
   white-space: normal;

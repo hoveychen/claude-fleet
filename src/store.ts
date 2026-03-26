@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { emit, listen, UnlistenFn } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import type { RemoteConnection } from "./components/ConnectionDialog";
 import type { RawMessage, SessionInfo, WaitingAlert } from "./types";
@@ -52,6 +52,7 @@ export const useUIStore = create<UIState>((set) => ({
   viewMode: (getItem("viewMode") as ViewMode) ?? "gallery",
   setTheme: (t) => {
     setItem("theme", t);
+    emit("overlay-theme-changed", t).catch(() => {});
     set({ theme: t });
   },
   setViewMode: (m) => {
@@ -166,5 +167,21 @@ export const useWaitingAlertsStore = create<WaitingAlertsState>((set) => ({
   refresh: async () => {
     const alerts = await invoke<WaitingAlert[]>("get_waiting_alerts");
     set({ alerts });
+  },
+}));
+
+// ── Overlay store ───────────────────────────────────────────────────────────
+
+interface OverlayState {
+  enabled: boolean;
+  setEnabled: (enabled: boolean) => void;
+}
+
+export const useOverlayStore = create<OverlayState>((set) => ({
+  enabled: getItem("overlay-enabled") === "true",
+  setEnabled: (enabled) => {
+    setItem("overlay-enabled", enabled ? "true" : "false");
+    invoke("toggle_overlay", { visible: enabled }).catch(() => {});
+    set({ enabled });
   },
 }));

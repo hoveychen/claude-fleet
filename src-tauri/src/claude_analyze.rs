@@ -48,7 +48,7 @@ pub const VALID_TAGS: &[&str] = &[
 pub struct AnalysisResult {
     /// 1–2 outcome tags (see [`VALID_TAGS`]).
     pub tags: Vec<String>,
-    /// Human-readable summary — only set when `needs_input` is among the tags.
+    /// Human-readable summary of what the agent just did or needs.
     pub summary: Option<String>,
 }
 
@@ -86,10 +86,17 @@ fn build_prompt(last_text: &str, locale: &str) -> String {
          - If nothing fits well, use `reporting`.\n\
          \n\
          Response format (exactly one line):\n\
-         - If `needs_input` is one of the tags:\n\
-           TAGS: needs_input[,other_tag] | SUMMARY: <one sentence under 80 chars describing what is needed>\n\
-         - Otherwise:\n\
-           TAGS: tag1[,tag2]\n\
+         TAGS: tag1[,tag2] | SUMMARY: <one sentence under 80 chars>\n\
+         \n\
+         The SUMMARY is ALWAYS required. Write it as if YOU are a loyal little fan reporting to your beloved boss (the user). \
+         Address the user directly — use \"你\" (Chinese) or \"you\" (English), NEVER refer to the user in third person. \
+         Tone: enthusiastic, slightly sycophantic, like an eager junior dev who adores their boss. \
+         Be brief, direct, and focused on what was done or what is needed from the boss. \
+         Describe what the assistant actually DID or what STATE it is in — do NOT let the tag choice influence the summary. \
+         Read the text carefully: if the assistant says it already implemented something, say so. \
+         Do NOT say \"asking\" or \"proposing\" when the work is already done.\n\
+         Examples: \"Login bug squashed, tests all green!\", \"Boss, need you to pick a database\", \
+         \"老板，登录bug搞定了，测试全过！\", \"老板，等你定一下用哪个数据库\"\n\
          \n\
          {lang_instruction}\n\
          \n\
@@ -237,20 +244,33 @@ fn parse_response(raw: &str) -> AnalysisResult {
 
 // ── Mascot quip generation ─────────────────────────────────────────────────
 
-const MAX_QUIPS: usize = 8;
+const QUIPS_PER_GROUP: usize = 10;
 
-fn build_quip_prompt(titles: &[String], mood: &str, locale: &str) -> String {
+fn build_quip_prompt(busy_titles: &[String], done_titles: &[String], locale: &str) -> String {
     let lang = match locale {
         "zh" => "用中文回复，口语化，用网络用语和梗，像程序员朋友在吐槽。",
         _ => "Reply in casual English, like a programmer friend roasting alongside you.",
     };
 
-    let titles_text = titles
-        .iter()
-        .enumerate()
-        .map(|(i, t)| format!("{}. {}", i + 1, t))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let format_titles = |titles: &[String]| -> String {
+        titles
+            .iter()
+            .enumerate()
+            .map(|(i, t)| format!("{}. {}", i + 1, t))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let busy_text = if busy_titles.is_empty() {
+        "(none)".to_string()
+    } else {
+        format_titles(busy_titles)
+    };
+    let done_text = if done_titles.is_empty() {
+        "(none)".to_string()
+    } else {
+        format_titles(done_titles)
+    };
 
     format!(
         "You are a mascot — the user's loyal little sidekick watching AI coding agents work. \
@@ -265,42 +285,70 @@ fn build_quip_prompt(titles: &[String], mood: &str, locale: &str) -> String {
          - Examples: \"又修bug，谁写的屎山\", \"改了又改，需求人呢\", \"秒了，这也太简单\", \
            \"测试全红，笑死\", \"这需求离谱到我想报警\"\n\
          \n\
-         Current mood: {mood}\n\
-         The AI agents are working on:\n\
-         {titles_text}\n\
+         Currently working on (busy):\n\
+         {busy_text}\n\
          \n\
-         Generate {n} short quips (max 15 Chinese chars / 25 English chars). \
-         Reference specific tasks. Be funny, snarky, dramatic. Vary the tone — \
-         some supportive, some roasting, some shocked, some sarcastic.\n\
+         Recently completed (done):\n\
+         {done_text}\n\
+         \n\
+         Generate quips in TWO sections, separated by a blank line:\n\
+         \n\
+         BUSY (for when agents are working):\n\
+         - Generate {n} quips (max 15 Chinese chars / 25 English chars)\n\
+         - Half should roast/tease the ongoing tasks (snarky, dramatic, sarcastic)\n\
+         - Half should be supportive/encouraging about the ongoing work\n\
+         - Reference specific task titles when possible\n\
+         \n\
+         IDLE (for when things are calm):\n\
+         - Generate {n} quips (max 15 Chinese chars / 25 English chars)\n\
+         - Half should praise/celebrate the completed tasks (rainbow fart, over-the-top compliments)\n\
+         - Half should be playful commentary about downtime or completed work\n\
+         - Reference specific task titles when possible\n\
          \n\
          {lang}\n\
          \n\
-         Output ONLY the quips, one per line. No numbers, bullets, or quotes.",
-        mood = mood,
-        titles_text = titles_text,
-        n = MAX_QUIPS,
+         Output format — EXACTLY like this, no numbers, bullets, or quotes:\n\
+         BUSY\n\
+         quip1\n\
+         quip2\n\
+         ...\n\
+         \n\
+         IDLE\n\
+         quip1\n\
+         quip2\n\
+         ...",
+        busy_text = busy_text,
+        done_text = done_text,
+        n = QUIPS_PER_GROUP,
         lang = lang,
     )
 }
 
+/// Result of mascot quip generation — two groups of quips.
+#[derive(serde::Serialize, Default)]
+pub struct MascotQuips {
+    pub busy: Vec<String>,
+    pub idle: Vec<String>,
+}
+
 /// Generate mascot quips based on recent session titles.
 ///
-/// Returns up to [`MAX_QUIPS`] short personality lines.  Blocks for up to
-/// [`ANALYSIS_TIMEOUT`] — call from a background thread.
-pub fn generate_mascot_quips(titles: &[String], mood: &str, locale: &str) -> Vec<String> {
+/// Returns up to [`QUIPS_PER_GROUP`] quips for each of two groups (busy/idle).
+/// Blocks for up to [`ANALYSIS_TIMEOUT`] — call from a background thread.
+pub fn generate_mascot_quips(busy_titles: &[String], done_titles: &[String], locale: &str) -> MascotQuips {
     let claude_bin = match resolve_claude_path() {
         Some(p) => p,
         None => {
             log_debug("[mascot_quips] claude CLI not found");
-            return vec![];
+            return MascotQuips::default();
         }
     };
 
-    if titles.is_empty() {
-        return vec![];
+    if busy_titles.is_empty() && done_titles.is_empty() {
+        return MascotQuips::default();
     }
 
-    let prompt = build_quip_prompt(titles, mood, locale);
+    let prompt = build_quip_prompt(busy_titles, done_titles, locale);
 
     let (tx, rx) = mpsc::channel();
     let prompt_clone = prompt.clone();
@@ -327,15 +375,15 @@ pub fn generate_mascot_quips(titles: &[String], mood: &str, locale: &str) -> Vec
                 "[mascot_quips] claude -p exited with status {}",
                 output.status
             ));
-            return vec![];
+            return MascotQuips::default();
         }
         Ok(Err(e)) => {
             log_debug(&format!("[mascot_quips] failed to spawn claude: {e}"));
-            return vec![];
+            return MascotQuips::default();
         }
         Err(_) => {
             log_debug("[mascot_quips] timed out");
-            return vec![];
+            return MascotQuips::default();
         }
     };
 
@@ -343,14 +391,44 @@ pub fn generate_mascot_quips(titles: &[String], mood: &str, locale: &str) -> Vec
     log_debug(&format!(
         "[mascot_quips] raw response (len={}): {:?}",
         raw.len(),
-        truncate_str(&raw, 300)
+        truncate_str(&raw, 500)
     ));
 
-    raw.lines()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty() && l.len() <= 80)
-        .take(MAX_QUIPS)
-        .collect()
+    parse_quip_groups(&raw)
+}
+
+/// Parse the two-group output from the LLM into busy/idle quip vectors.
+fn parse_quip_groups(raw: &str) -> MascotQuips {
+    let mut busy = Vec::new();
+    let mut idle = Vec::new();
+    let mut current: Option<&str> = None; // "busy" or "idle"
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        let upper = trimmed.to_uppercase();
+        if upper == "BUSY" || upper.starts_with("BUSY:") {
+            current = Some("busy");
+            continue;
+        }
+        if upper == "IDLE" || upper.starts_with("IDLE:") {
+            current = Some("idle");
+            continue;
+        }
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Skip lines that are too long
+        if trimmed.len() > 80 {
+            continue;
+        }
+        match current {
+            Some("busy") if busy.len() < QUIPS_PER_GROUP => busy.push(trimmed.to_string()),
+            Some("idle") if idle.len() < QUIPS_PER_GROUP => idle.push(trimmed.to_string()),
+            _ => {}
+        }
+    }
+
+    MascotQuips { busy, idle }
 }
 
 #[cfg(test)]
@@ -361,7 +439,15 @@ mod tests {
     fn parse_simple_tags() {
         let r = parse_response("TAGS: bug_fixed, show_off");
         assert_eq!(r.tags, vec!["bug_fixed", "show_off"]);
+        // No summary in this response — caller should use fallback
         assert!(r.summary.is_none());
+    }
+
+    #[test]
+    fn parse_tags_with_summary() {
+        let r = parse_response("TAGS: bug_fixed | SUMMARY: Fixed the login timeout issue");
+        assert_eq!(r.tags, vec!["bug_fixed"]);
+        assert_eq!(r.summary.as_deref(), Some("Fixed the login timeout issue"));
     }
 
     #[test]
@@ -487,18 +573,48 @@ mod tests {
 
     #[test]
     fn build_quip_prompt_formats_titles() {
-        let titles = vec!["Fix auth bug".into(), "Add dark mode".into()];
-        let p = build_quip_prompt(&titles, "happy", "en");
+        let busy = vec!["Fix auth bug".into(), "Add dark mode".into()];
+        let done = vec!["Refactor tests".into()];
+        let p = build_quip_prompt(&busy, &done, "en");
         assert!(p.contains("1. Fix auth bug"));
         assert!(p.contains("2. Add dark mode"));
-        assert!(p.contains("happy"));
+        assert!(p.contains("1. Refactor tests"));
+        assert!(p.contains("BUSY"));
+        assert!(p.contains("IDLE"));
     }
 
     #[test]
     fn build_quip_prompt_chinese_personality() {
-        let titles = vec!["修复登录".into()];
-        let p = build_quip_prompt(&titles, "neutral", "zh");
+        let busy = vec!["修复登录".into()];
+        let done: Vec<String> = vec![];
+        let p = build_quip_prompt(&busy, &done, "zh");
         assert!(p.contains("用中文回复"));
         assert!(p.contains("1. 修复登录"));
+    }
+
+    // ── parse_quip_groups tests ─────────────────────────────────────────────
+
+    #[test]
+    fn parse_quip_groups_basic() {
+        let raw = "BUSY\nroast line 1\nroast line 2\n\nIDLE\npraise line 1\npraise line 2";
+        let result = parse_quip_groups(raw);
+        assert_eq!(result.busy, vec!["roast line 1", "roast line 2"]);
+        assert_eq!(result.idle, vec!["praise line 1", "praise line 2"]);
+    }
+
+    #[test]
+    fn parse_quip_groups_with_colon() {
+        let raw = "BUSY:\nline1\n\nIDLE:\nline2";
+        let result = parse_quip_groups(raw);
+        assert_eq!(result.busy, vec!["line1"]);
+        assert_eq!(result.idle, vec!["line2"]);
+    }
+
+    #[test]
+    fn parse_quip_groups_caps_insensitive() {
+        let raw = "busy\nA\n\nidle\nB";
+        let result = parse_quip_groups(raw);
+        assert_eq!(result.busy, vec!["A"]);
+        assert_eq!(result.idle, vec!["B"]);
     }
 }

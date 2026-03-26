@@ -431,16 +431,17 @@ impl Backend for LocalBackend {
             let msg = format!("Source '{}' is disabled", source);
             return Box::pin(async move { Err(msg) });
         }
-        match crate::agent_source::find_source_by_api_name(&self.sources, source) {
-            Some(s) => {
-                let result = s.fetch_account();
-                Box::pin(async move { result })
+        // Clone Arc and move the blocking work into the future so the backend
+        // mutex is released before the (potentially slow) HTTP / subprocess
+        // call runs.  This lets multiple source fetches run in parallel.
+        let sources = self.sources.clone();
+        let source = source.to_string();
+        Box::pin(async move {
+            match crate::agent_source::find_source_by_api_name(&sources, &source) {
+                Some(s) => s.fetch_account(),
+                None => Err(format!("Unknown source: {source}")),
             }
-            None => {
-                let msg = format!("Unknown source: {source}");
-                Box::pin(async move { Err(msg) })
-            }
-        }
+        })
     }
 
     fn source_usage(&self, source: &str) -> crate::backend::SourceDataFuture {
@@ -449,16 +450,17 @@ impl Backend for LocalBackend {
             let msg = format!("Source '{}' is disabled", source);
             return Box::pin(async move { Err(msg) });
         }
-        match crate::agent_source::find_source_by_api_name(&self.sources, source) {
-            Some(s) => {
-                let result = s.fetch_usage();
-                Box::pin(async move { result })
+        // Clone Arc and move the blocking work into the future so the backend
+        // mutex is released before the (potentially slow) HTTP / subprocess
+        // call runs.  This lets multiple source fetches run in parallel.
+        let sources = self.sources.clone();
+        let source = source.to_string();
+        Box::pin(async move {
+            match crate::agent_source::find_source_by_api_name(&sources, &source) {
+                Some(s) => s.fetch_usage(),
+                None => Err(format!("Unknown source: {source}")),
             }
-            None => {
-                let msg = format!("Unknown source: {source}");
-                Box::pin(async move { Err(msg) })
-            }
-        }
+        })
     }
 
     fn usage_summaries(&self) -> Vec<crate::backend::SourceUsageSummary> {
@@ -631,27 +633,39 @@ fn detect_waiting_transitions(
                 let result = crate::claude_analyze::analyze_session_outcome(&analysis_text, &lang);
                 an.lock().unwrap().remove(&session_id);
 
-                if let Some(result) = result {
-                    // Always store outcome tags for the mascot.
+                // Always store outcome tags for the mascot.
+                if let Some(ref result) = result {
                     so.lock().unwrap().insert(session_id.clone(), result.tags.clone());
+                }
 
-                    // If `needs_input` is among the tags, also create a WaitingAlert.
-                    if result.tags.contains(&"needs_input".to_string()) {
-                        let summary = result.summary.unwrap_or_else(|| "Waiting for input".to_string());
-                        let alert = WaitingAlert {
-                            session_id: session_id.clone(),
-                            workspace_name: display_name.clone(),
-                            summary: summary.clone(),
-                            detected_at_ms: SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis() as u64,
-                            jsonl_path: jsonl_path.clone(),
-                        };
-                        wa.lock().unwrap().insert(session_id, alert);
-                        let alerts: Vec<WaitingAlert> =
-                            wa.lock().unwrap().values().cloned().collect();
-                        let _ = app_bg.emit("waiting-alerts-updated", &alerts);
+                let has_needs_input = result.as_ref()
+                    .map_or(false, |r| r.tags.contains(&"needs_input".to_string()));
+                let mode = get_notification_mode(&app_bg);
+
+                // Decide whether to create an in-app alert and/or OS notification.
+                let should_alert = mode == "all" || has_needs_input;
+                let should_os_notify = mode != "none" && (mode == "all" || has_needs_input);
+
+                if should_alert {
+                    let summary = result.as_ref().and_then(|r| r.summary.clone())
+                        .unwrap_or_else(|| fallback_summary_for_tags(
+                            result.as_ref().map(|r| r.tags.as_slice()).unwrap_or(&[])
+                        ));
+                    let alert = WaitingAlert {
+                        session_id: session_id.clone(),
+                        workspace_name: display_name.clone(),
+                        summary: summary.clone(),
+                        detected_at_ms: SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64,
+                        jsonl_path: jsonl_path.clone(),
+                    };
+                    wa.lock().unwrap().insert(session_id, alert);
+                    let alerts: Vec<WaitingAlert> =
+                        wa.lock().unwrap().values().cloned().collect();
+                    let _ = app_bg.emit("waiting-alerts-updated", &alerts);
+                    if should_os_notify {
                         send_os_notification(&app_bg, &display_name, &summary);
                     }
                 }
@@ -719,6 +733,36 @@ fn extract_last_assistant_text(jsonl_path: &str, max_chars: usize) -> Option<Str
         }
     }
     None
+}
+
+/// Produce a short fallback summary based on outcome tags when the LLM did not
+/// return a SUMMARY field.
+pub(crate) fn fallback_summary_for_tags(tags: &[String]) -> String {
+    let first = tags.first().map(|s| s.as_str()).unwrap_or("reporting");
+    match first {
+        "needs_input"   => "Waiting for input".to_string(),
+        "bug_fixed"     => "Bug fixed".to_string(),
+        "feature_added" => "Feature added".to_string(),
+        "stuck"         => "Agent is stuck".to_string(),
+        "apologizing"   => "Agent ran into an issue".to_string(),
+        "show_off"      => "Task completed".to_string(),
+        "concerned"     => "Potential issues detected".to_string(),
+        "confused"      => "Agent is confused".to_string(),
+        "celebrating"   => "Task completed successfully".to_string(),
+        "quick_fix"     => "Quick fix applied".to_string(),
+        "overwhelmed"   => "Extensive changes made".to_string(),
+        "scheming"      => "Planning next steps".to_string(),
+        "reporting"     => "Status update".to_string(),
+        _               => "Status update".to_string(),
+    }
+}
+
+/// Read the current notification mode from AppState ("all" | "user_action" | "none").
+pub(crate) fn get_notification_mode(app: &AppHandle) -> String {
+    use tauri::Manager;
+    app.try_state::<crate::AppState>()
+        .map(|s| s.notification_mode.lock().unwrap().clone())
+        .unwrap_or_else(|| "user_action".to_string())
 }
 
 pub(crate) fn send_os_notification(app: &AppHandle, title: &str, body: &str) {

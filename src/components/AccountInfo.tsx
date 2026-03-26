@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ClaudeIcon, CursorIcon, CodexIcon, OpenClawIcon } from "./SessionCard";
 import styles from "./AccountInfo.module.css";
 
 interface AccountInfoData {
@@ -178,7 +179,7 @@ export function AccountInfo({ embedded }: { embedded?: boolean } = {}) {
       )}
       {info && (
         <section className={styles.section}>
-          <Row label={t("account.auth")} value="Claude AI" />
+          <Row label={t("account.auth")} value="Claude AI" icon={<ClaudeIcon />} />
           <Row label={t("account.email")} value={info.email} />
           <Row label={t("account.org")} value={info.organization_name} />
           <Row label={t("account.plan")} value={info.plan} />
@@ -197,7 +198,7 @@ export function AccountInfo({ embedded }: { embedded?: boolean } = {}) {
           )}
           {openclawInfo && (
             <section className={styles.section}>
-              <Row label={t("account.auth")} value="OpenClaw" />
+              <Row label={t("account.auth")} value="OpenClaw" icon={<OpenClawIcon />} />
               <Row label={t("account.openclaw_version")} value={openclawInfo.version} />
               <Row label={t("account.openclaw_model")} value={openclawInfo.defaultModel} />
               {openclawInfo.providers.map((p) => (
@@ -224,7 +225,7 @@ export function AccountInfo({ embedded }: { embedded?: boolean } = {}) {
           )}
           {cursorInfo && (
             <section className={styles.section}>
-              <Row label={t("account.auth")} value="Cursor" />
+              <Row label={t("account.auth")} value="Cursor" icon={<CursorIcon />} />
               <Row label={t("account.email")} value={cursorInfo.email} />
               <Row label={t("account.cursor_plan")} value={cursorInfo.membershipType} />
               <Row label={t("account.cursor_status")} value={cursorInfo.subscriptionStatus} />
@@ -247,7 +248,7 @@ export function AccountInfo({ embedded }: { embedded?: boolean } = {}) {
           )}
           {codexInfo && (
             <section className={styles.section}>
-              <Row label={t("account.auth")} value="Codex" />
+              <Row label={t("account.auth")} value="Codex" icon={<CodexIcon />} />
               {codexInfo.planType && <Row label={t("account.plan")} value={codexInfo.planType} />}
               {codexInfo.limitName && <Row label={t("account.codex_limit")} value={codexInfo.limitName} />}
             </section>
@@ -467,11 +468,11 @@ function AiSetupModal({ onClose, isMacOS, cliInstallState, cliInstallMsg, onInst
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value, icon }: { label: string; value: string; icon?: React.ReactNode }) {
   return (
     <div className={styles.row}>
       <span className={styles.row_label}>{label}</span>
-      <span className={styles.row_value}>{value}</span>
+      <span className={styles.row_value}>{icon}{value}</span>
     </div>
   );
 }

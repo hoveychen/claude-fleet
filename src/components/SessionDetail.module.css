@@ -102,6 +102,15 @@
   color: var(--color-text-dim);
 }
 
+.context {
+  font-size: 11px;
+  color: var(--color-text-dim);
+}
+
+.context_high {
+  color: var(--color-warning, #e8a838);
+}
+
 .close_btn {
   padding: 3px 8px;
   background: none;
@@ -112,6 +121,56 @@
   font-size: 12px;
 }
 .close_btn:hover { background: var(--color-bg-secondary); color: var(--color-text); }
+
+/* Tab bar */
+.tab_bar {
+  display: flex;
+  gap: 0;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-sidebar);
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tab_bar::-webkit-scrollbar { display: none; }
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--color-text-dim);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+.tab:hover {
+  color: var(--color-text);
+}
+.tab_active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent, #60a5fa);
+}
+
+.tab_dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--color-text-dim);
+}
+.tab_dot[data-status="thinking"]    { background: var(--badge-thinking-fg); }
+.tab_dot[data-status="executing"]   { background: var(--badge-executing-fg); }
+.tab_dot[data-status="streaming"]   { background: var(--badge-streaming-fg); }
+.tab_dot[data-status="processing"]  { background: var(--badge-processing-fg); }
+.tab_dot[data-status="waitingInput"]{ background: var(--badge-waiting-fg); }
+.tab_dot[data-status="active"]      { background: var(--badge-active-fg); }
+.tab_dot[data-status="delegating"]  { background: var(--badge-delegating-fg); }
 
 /* Path */
 .path {
@@ -132,4 +191,32 @@
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+/* Auto-follow indicator */
+.follow_bar {
+  flex-shrink: 0;
+  padding: 4px 16px;
+  font-size: 11px;
+  color: var(--color-text-dim);
+  text-align: center;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-sidebar);
+}
+
+.follow_bar_btn {
+  flex-shrink: 0;
+  width: 100%;
+  padding: 6px 16px;
+  font-size: 11px;
+  color: var(--color-accent, #60a5fa);
+  text-align: center;
+  border: none;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-sidebar);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.follow_bar_btn:hover {
+  background: var(--color-bg-secondary);
 }

@@ -469,10 +469,10 @@ fn cmd_agents(show_all: bool, as_json: bool) {
     let r = c_reset();
 
     println!(
-        "{b}{:<10}{r}  {b}{:<20}{r}  {b}{:<10}{r}  {b}{:>8}{r}  {b}{:>7}{r}  {b}{}{r}",
-        "ID", "WORKSPACE", "STATUS", "SPEED", "TOKENS", "MODEL"
+        "{b}{:<10}{r}  {b}{:<20}{r}  {b}{:<10}{r}  {b}{:>8}{r}  {b}{:>7}{r}  {b}{:>5}{r}  {b}{}{r}",
+        "ID", "WORKSPACE", "STATUS", "SPEED", "TOKENS", "CTX%", "MODEL"
     );
-    println!("{}", "─".repeat(72));
+    println!("{}", "─".repeat(80));
 
     for s in &filtered {
         let id_display = if s.is_subagent {
@@ -488,14 +488,19 @@ fn cmd_agents(show_all: bool, as_json: bool) {
             .as_deref()
             .map(short_model)
             .unwrap_or_else(|| "-".to_string());
+        let ctx_str = s
+            .context_percent
+            .map(|p| format!("{}%", (p * 100.0).round() as u32))
+            .unwrap_or_else(|| "-".to_string());
 
         println!(
-            "{:<10}  {:<20}  {sc}{:<10}{r}  {:>8}  {:>7}  {}",
+            "{:<10}  {:<20}  {sc}{:<10}{r}  {:>8}  {:>7}  {:>5}  {}",
             id_display,
             ws,
             status_str,
             format_speed(s.token_speed),
             format_tokens(s.total_output_tokens),
+            ctx_str,
             model_str,
             r = c_reset(),
         );
@@ -553,6 +558,9 @@ fn cmd_agent(id_prefix: &str, as_json: bool) {
 
     kv("Token Speed:", &format!("{:.1} tok/s", s.token_speed));
     kv("Total Tokens:", &format_tokens(s.total_output_tokens));
+    if let Some(pct) = s.context_percent {
+        kv("Context:", &format!("{}%", (pct * 100.0).round() as u32));
+    }
 
     if let Some(ref model) = s.model {
         kv("Model:", model);

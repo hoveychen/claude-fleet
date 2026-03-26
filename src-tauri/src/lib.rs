@@ -12,7 +12,9 @@ pub mod openclaw_source;
 pub mod remote;
 pub mod session;
 
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -58,11 +60,144 @@ fn log_debug(msg: &str) {
     }
 }
 
+// ── TTS via system `say` command (macOS) ─────────────────────────────────────
+
+#[derive(serde::Serialize, Clone)]
+struct TtsVoice {
+    name: String,
+    lang: String,
+}
+
+#[tauri::command]
+fn get_tts_voices(locale: String) -> Vec<TtsVoice> {
+    let output = match std::process::Command::new("say")
+        .args(["--voice", "?"])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return vec![],
+    };
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let lang_prefix = if locale == "zh" { "zh" } else { "en" };
+    let mut voices = Vec::new();
+    for line in raw.lines() {
+        // Format: "Name               lang_REGION    # description"
+        let parts: Vec<&str> = line.splitn(2, '#').collect();
+        let before_hash = parts[0];
+        let tokens: Vec<&str> = before_hash.split_whitespace().collect();
+        if tokens.len() >= 2 {
+            let lang = tokens[tokens.len() - 1];
+            let name = tokens[..tokens.len() - 1].join(" ");
+            if lang.to_lowercase().starts_with(lang_prefix) {
+                voices.push(TtsVoice {
+                    name,
+                    lang: lang.to_string(),
+                });
+            }
+        }
+    }
+    if voices.is_empty() {
+        // Fallback: return all voices
+        for line in raw.lines() {
+            let parts: Vec<&str> = line.splitn(2, '#').collect();
+            let before_hash = parts[0];
+            let tokens: Vec<&str> = before_hash.split_whitespace().collect();
+            if tokens.len() >= 2 {
+                let lang = tokens[tokens.len() - 1];
+                let name = tokens[..tokens.len() - 1].join(" ");
+                voices.push(TtsVoice {
+                    name,
+                    lang: lang.to_string(),
+                });
+            }
+        }
+    }
+    voices
+}
+
+#[tauri::command]
+fn speak_text(text: String, voice: Option<String>, locale: Option<String>) {
+    std::thread::spawn(move || {
+        let mut cmd = std::process::Command::new("say");
+        if let Some(v) = &voice {
+            cmd.args(["--voice", v]);
+        } else {
+            // Pick a default voice that matches the locale
+            let default_voice = match locale.as_deref() {
+                Some("zh") => "Tingting",
+                _ => "Samantha",
+            };
+            cmd.args(["--voice", default_voice]);
+        }
+        cmd.arg(&text);
+        let _ = cmd.output();
+    });
+}
+
+// ── Notification mode ────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn get_notification_mode(state: tauri::State<AppState>) -> String {
+    state.notification_mode.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn set_notification_mode(mode: String, state: tauri::State<AppState>) {
+    let valid = matches!(mode.as_str(), "all" | "user_action" | "none");
+    if valid {
+        *state.notification_mode.lock().unwrap() = mode;
+    }
+}
+
+#[tauri::command]
+fn open_notification_settings() {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.notifications")
+            .spawn();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", "ms-settings:notifications"])
+            .spawn();
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        // Best-effort for Linux / other — most DEs don't have a unified URL.
+        let _ = std::process::Command::new("xdg-open")
+            .arg("settings://notifications")
+            .spawn();
+    }
+}
+
 // ── Setup status check ───────────────────────────────────────────────────────
 
 #[tauri::command]
-fn check_setup_status(state: tauri::State<AppState>) -> backend::SetupStatus {
-    state.backend.lock().unwrap().check_setup()
+async fn check_setup_status(state: tauri::State<'_, AppState>) -> Result<backend::SetupStatus, String> {
+    // Only hold the backend lock briefly to get the cached session list,
+    // then run the (potentially slow) subprocess checks outside the lock.
+    let sessions = {
+        let b = state.backend.lock().unwrap();
+        b.list_sessions()
+    };
+    let (cli_installed, cli_path) = check_cli_installed();
+    let claude_dir_exists = dirs::home_dir()
+        .map(|h| h.join(".claude").is_dir())
+        .unwrap_or(false);
+    let detected_tools = detect_installed_tools(&sessions);
+    let logged_in = account::read_keychain_credentials().is_ok();
+    let has_sessions = !sessions.is_empty();
+    Ok(backend::SetupStatus {
+        cli_installed,
+        cli_path,
+        claude_dir_exists,
+        detected_tools,
+        logged_in,
+        has_sessions,
+        credentials_valid: None,
+    })
 }
 
 /// Detect which Claude-related tools are installed on the local machine.
@@ -208,7 +343,8 @@ async fn get_account_info(
             cached.insert(0, summary);
         }
     }
-    rebuild_tray(&app);
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || rebuild_tray(&handle));
     Ok(info)
 }
 
@@ -225,9 +361,32 @@ async fn get_source_account(
 async fn get_source_usage(
     source: String,
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<Value, String> {
     let fut = state.backend.lock().unwrap().source_usage(&source);
-    fut.await
+    let val = fut.await?;
+    // Update the cached usage summary for the tray menu so that the
+    // background refresh thread is no longer needed.
+    {
+        let summary = match source.as_str() {
+            "cursor" => Some(backend::SourceUsageSummary::from_cursor(&val)),
+            "codex" => Some(backend::SourceUsageSummary::from_codex(&val)),
+            "openclaw" => Some(backend::SourceUsageSummary::from_openclaw(&val)),
+            _ => None,
+        };
+        if let Some(summary) = summary {
+            let app_state = app.state::<AppState>();
+            let mut cached = app_state.cached_usage.lock().unwrap();
+            if let Some(pos) = cached.iter().position(|s| s.source == source) {
+                cached[pos] = summary;
+            } else {
+                cached.push(summary);
+            }
+        }
+    }
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || rebuild_tray(&handle));
+    Ok(val)
 }
 
 // ── Process kill ──────────────────────────────────────────────────────────────
@@ -249,10 +408,21 @@ pub struct AppState {
     pub backend: Arc<Mutex<Box<dyn Backend>>>,
     /// User's current UI locale (e.g. "en", "zh"), shared with backend threads.
     pub locale: Arc<Mutex<String>>,
+    /// Notification mode: "all" | "user_action" | "none".
+    pub notification_mode: Arc<Mutex<String>>,
     /// Cached sessions for tray menu rebuilds.
     pub cached_sessions: Arc<Mutex<Vec<SessionInfo>>>,
     /// Cached per-source usage summaries for tray menu display.
     pub cached_usage: Arc<Mutex<Vec<backend::SourceUsageSummary>>>,
+    /// Fingerprint of the last tray menu content — skip rebuilds when unchanged
+    /// to prevent the menu from closing while the user is interacting with it.
+    pub tray_fingerprint: Arc<Mutex<u64>>,
+    /// Timestamp of the last tray icon click.  While the menu is presumed open
+    /// (within [`TRAY_MENU_GRACE_SECS`] of a click) we defer `set_menu` calls
+    /// so macOS doesn't close the menu under the user's cursor.
+    pub tray_last_click: Arc<Mutex<std::time::Instant>>,
+    /// Whether a deferred tray rebuild is pending.
+    pub tray_rebuild_pending: Arc<Mutex<bool>>,
 }
 
 // ── Tauri commands ───────────────────────────────────────────────────────────
@@ -581,12 +751,71 @@ fn get_waiting_alerts(state: tauri::State<AppState>) -> Vec<backend::WaitingAler
 // ── Mascot quip generation ──────────────────────────────────────────────────
 
 #[tauri::command]
-async fn generate_mascot_quips(titles: Vec<String>, mood: String, locale: String) -> Vec<String> {
+async fn generate_mascot_quips(busy_titles: Vec<String>, done_titles: Vec<String>, locale: String) -> claude_analyze::MascotQuips {
     tokio::task::spawn_blocking(move || {
-        claude_analyze::generate_mascot_quips(&titles, &mood, &locale)
+        claude_analyze::generate_mascot_quips(&busy_titles, &done_titles, &locale)
     })
     .await
     .unwrap_or_default()
+}
+
+// ── Overlay window commands ──────────────────────────────────────────────────
+
+#[tauri::command]
+fn toggle_overlay(app: tauri::AppHandle, visible: bool) {
+    if let Some(w) = app.get_webview_window("overlay") {
+        if visible {
+            // Move on-screen (bottom-right). Using position instead of
+            // show/hide avoids the transparent-window white-flash bug on macOS.
+            let _ = w.show();
+            if let Ok(Some(monitor)) = w.current_monitor() {
+                let size = monitor.size();
+                let scale = monitor.scale_factor();
+                let x = (size.width as f64 / scale) as i32 - 300;
+                let y = (size.height as f64 / scale) as i32 - 220;
+                let _ = w.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+                    x as f64, y as f64,
+                )));
+            } else {
+                let _ = w.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+                    100.0, 100.0,
+                )));
+            }
+        } else {
+            // Move off-screen to "hide"
+            let _ = w.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+                -9999.0, -9999.0,
+            )));
+        }
+    }
+}
+
+#[tauri::command]
+fn center_overlay(app: tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("overlay") {
+        if let Ok(Some(monitor)) = w.current_monitor() {
+            let size = monitor.size();
+            let scale = monitor.scale_factor();
+            if let Ok(win_size) = w.outer_size() {
+                let x = (size.width as f64 / scale - win_size.width as f64 / scale) / 2.0;
+                let y = (size.height as f64 / scale - win_size.height as f64 / scale) / 2.0;
+                let _ = w.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
+            }
+        }
+    }
+}
+
+#[tauri::command]
+fn show_main_window(app: tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+#[tauri::command]
+fn open_session_from_overlay(app: tauri::AppHandle, jsonl_path: String) {
+    let _ = app.emit("open-session", jsonl_path);
 }
 
 // ── Tray helpers ─────────────────────────────────────────────────────────────
@@ -620,27 +849,67 @@ pub fn update_tray(app: &tauri::AppHandle, sessions: &[SessionInfo]) {
     // Cache sessions for use by background usage refresh.
     let state = app.state::<AppState>();
     *state.cached_sessions.lock().unwrap() = sessions.to_vec();
-    rebuild_tray(app);
+    // Tray operations (set_menu, set_tooltip, set_title) touch NSStatusItem on
+    // macOS and MUST run on the main thread.  This function is often called
+    // from background scanner threads, so dispatch rather than calling directly.
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || rebuild_tray(&handle));
 }
 
 pub fn update_tray_usage(app: &tauri::AppHandle, summaries: Vec<backend::SourceUsageSummary>) {
     let state = app.state::<AppState>();
     *state.cached_usage.lock().unwrap() = summaries;
-    rebuild_tray(app);
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || rebuild_tray(&handle));
 }
+
+/// How long after a tray click we assume the menu is still open and defer
+/// rebuilds so macOS doesn't yank it away from the user.
+const TRAY_MENU_GRACE_SECS: u64 = 15;
 
 fn rebuild_tray(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
     let sessions = state.cached_sessions.lock().unwrap().clone();
     let summaries = state.cached_usage.lock().unwrap().clone();
 
-    let active_main: Vec<&SessionInfo> = sessions.iter()
-        .filter(|s| !s.is_subagent && is_session_active(s))
+    // Show all active sessions (main + subagents), sorted: main first, then subs.
+    let mut active_all: Vec<&SessionInfo> = sessions.iter()
+        .filter(|s| is_session_active(s))
         .collect();
-    let sub_count = sessions.iter().filter(|s| s.is_subagent && is_session_active(s)).count();
-    let total = active_main.len() + sub_count;
+    active_all.sort_by_key(|s| s.is_subagent);
+    let active_main = &active_all; // alias for build_tray_menu signature
+    let sub_count = active_all.iter().filter(|s| s.is_subagent).count();
+    let total = active_all.len();
 
-    // Update tooltip & title
+    // Compute a fingerprint of the tray content so we can skip redundant
+    // menu rebuilds — calling set_menu() closes the menu if it is open.
+    let fingerprint = {
+        let mut h = DefaultHasher::new();
+        total.hash(&mut h);
+        sub_count.hash(&mut h);
+        for s in active_main.iter() {
+            s.workspace_name.hash(&mut h);
+            s.is_subagent.hash(&mut h);
+            status_label(&s.status).hash(&mut h);
+        }
+        for su in &summaries {
+            su.source.hash(&mut h);
+            for b in &su.bars {
+                b.label.hash(&mut h);
+                ((b.utilization * 10000.0) as u64).hash(&mut h);
+            }
+        }
+        h.finish()
+    };
+
+    let prev = {
+        let mut fp = state.tray_fingerprint.lock().unwrap();
+        let old = *fp;
+        *fp = fingerprint;
+        old
+    };
+
+    // Update tooltip & title (cheap, won't close menu)
     let tooltip = if total == 0 {
         "Claude Fleet".to_string()
     } else {
@@ -658,16 +927,52 @@ fn rebuild_tray(app: &tauri::AppHandle) {
         let _ = tray.set_title(Some(&title));
     }
 
-    // Rebuild menu
-    if let Ok(menu) = build_tray_menu(app, &active_main, sub_count, total, &summaries) {
-        let _ = tray.set_menu(Some(menu));
+    // Only rebuild the menu when content actually changed.
+    if fingerprint != prev {
+        // If the menu is presumed open (recent tray click), defer the rebuild
+        // so we don't close it under the user's cursor.
+        let since_click = state.tray_last_click.lock().unwrap().elapsed();
+        if since_click < std::time::Duration::from_secs(TRAY_MENU_GRACE_SECS) {
+            *state.tray_rebuild_pending.lock().unwrap() = true;
+            return;
+        }
+
+        if let Ok(menu) = build_tray_menu(app, active_main, sub_count, total, &summaries) {
+            let _ = tray.set_menu(Some(menu));
+        }
+        *state.tray_rebuild_pending.lock().unwrap() = false;
     }
+}
+
+/// Flush any deferred tray rebuild.  Called from a background timer once the
+/// grace period after a tray click has expired.
+fn flush_pending_tray_rebuild(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    let pending = *state.tray_rebuild_pending.lock().unwrap();
+    if !pending { return; }
+
+    let since_click = state.tray_last_click.lock().unwrap().elapsed();
+    if since_click < std::time::Duration::from_secs(TRAY_MENU_GRACE_SECS) {
+        return; // still within grace period
+    }
+
+    // Force a rebuild by resetting the fingerprint so the next call rebuilds.
+    *state.tray_fingerprint.lock().unwrap() = 0;
+    *state.tray_rebuild_pending.lock().unwrap() = false;
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || rebuild_tray(&handle));
+}
+
+/// Render a utilization value (0.0–1.0) as a percentage string, e.g. `45%`.
+fn usage_pct_str(utilization: f64) -> String {
+    let pct = (utilization * 100.0).round() as u32;
+    format!("{}%", pct)
 }
 
 fn build_tray_menu(
     app: &tauri::AppHandle,
     active_main: &[&SessionInfo],
-    sub_count: usize,
+    _sub_count: usize,
     total: usize,
     summaries: &[backend::SourceUsageSummary],
 ) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::Error> {
@@ -683,23 +988,12 @@ fn build_tray_menu(
         &MenuItemBuilder::new(header_text).id("info-header").enabled(false).build(app)?
     );
 
-    // List up to 8 active main agents
-    for (i, s) in active_main.iter().take(8).enumerate() {
-        let label = format!("  {} — {}", s.workspace_name, status_label(&s.status));
+    // List all active sessions (main + subagents), clickable to open detail.
+    for (i, s) in active_main.iter().enumerate() {
+        let prefix = if s.is_subagent { "  ↳ " } else { "" };
+        let label = format!("{}{} — {}", prefix, s.workspace_name, status_label(&s.status));
         builder = builder.item(
-            &MenuItemBuilder::new(label).id(format!("info-agent-{}", i)).enabled(false).build(app)?
-        );
-    }
-    if active_main.len() > 8 {
-        let more = format!("  ... and {} more", active_main.len() - 8);
-        builder = builder.item(
-            &MenuItemBuilder::new(more).id("info-more").enabled(false).build(app)?
-        );
-    }
-    if sub_count > 0 {
-        let sub_label = format!("  + {} subagent{}", sub_count, if sub_count == 1 { "" } else { "s" });
-        builder = builder.item(
-            &MenuItemBuilder::new(sub_label).id("info-sub").enabled(false).build(app)?
+            &MenuItemBuilder::new(label).id(format!("open-session-{}", i)).build(app)?
         );
     }
 
@@ -712,7 +1006,7 @@ fn build_tray_menu(
                 continue;
             }
             let parts: Vec<String> = summary.bars.iter()
-                .map(|b| format!("{}: {:.0}%", b.label, b.utilization * 100.0))
+                .map(|b| format!("{}\t{}", b.label, usage_pct_str(b.utilization)))
                 .collect();
             let source_label = match summary.source.as_str() {
                 "claude" => "Claude",
@@ -721,11 +1015,11 @@ fn build_tray_menu(
                 "openclaw" => "OpenClaw",
                 other => other,
             };
-            let line = format!("{}  {}", source_label, parts.join("  |  "));
+            let line = format!("{}\t{}", source_label, parts.join("\t"));
             builder = builder.item(
                 &MenuItemBuilder::new(line)
                     .id(format!("info-usage-{}", idx))
-                    .enabled(false)
+                    .enabled(true)
                     .build(app)?
             );
         }
@@ -763,8 +1057,12 @@ pub fn run() {
             // NullBackend is a placeholder; replaced with LocalBackend in setup().
             backend: Arc::new(Mutex::new(Box::new(backend::NullBackend) as Box<dyn Backend>)),
             locale: Arc::new(Mutex::new("en".to_string())),
+            notification_mode: Arc::new(Mutex::new("user_action".to_string())),
             cached_sessions: Arc::new(Mutex::new(Vec::new())),
             cached_usage: Arc::new(Mutex::new(Vec::new())),
+            tray_fingerprint: Arc::new(Mutex::new(0)),
+            tray_last_click: Arc::new(Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(600))),
+            tray_rebuild_pending: Arc::new(Mutex::new(false)),
         })
         .setup(move |app| {
             // Replace NullBackend with the real LocalBackend now that AppHandle
@@ -787,20 +1085,10 @@ pub fn run() {
             // Truncate the hook events file if it has grown too large.
             hooks::maybe_truncate_events_file();
 
-            // ── Background usage refresh (every 120s) ────────────────────────
-            // Runs network I/O outside the backend lock to avoid blocking IPC.
-            {
-                let app_handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    loop {
-                        let sources = agent_source::build_sources();
-                        let summaries =
-                            local_backend::fetch_usage_summaries_from_sources(&sources);
-                        update_tray_usage(&app_handle, summaries);
-                        std::thread::sleep(std::time::Duration::from_secs(120));
-                    }
-                });
-            }
+            // Background usage refresh removed — the frontend's periodic
+            // `get_source_usage` / `get_account_info` calls now update the
+            // cached tray summaries as a side-effect, avoiding duplicate
+            // network requests that could hit rate limits.
 
             // ── Tray icon ────────────────────────────────────────────────────
             // Build an initial menu; it will be rebuilt dynamically by rebuild_tray().
@@ -837,20 +1125,58 @@ pub fn run() {
             tray_builder
                 .menu(&tray_menu)
                 .tooltip("Claude Fleet")
-                .on_menu_event(|app, event| match event.id().as_ref() {
-                    "switch-connection" => {
+                .on_tray_icon_event(|tray, event| {
+                    // Record click time so rebuild_tray() can defer set_menu()
+                    // while the user is interacting with the menu.
+                    if let tauri::tray::TrayIconEvent::Click { .. } = event {
+                        let app = tray.app_handle();
+                        let state = app.state::<AppState>();
+                        *state.tray_last_click.lock().unwrap() = std::time::Instant::now();
+                    }
+                })
+                .on_menu_event(|app, event| {
+                    let id = event.id();
+                    let id_str = id.as_ref();
+                    if id_str == "switch-connection" {
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = w.show();
                             let _ = w.set_focus();
                         }
                         let _ = app.emit("switch-connection", ());
-                    }
-                    "quit" => {
+                    } else if id_str == "quit" {
                         app.exit(0);
+                    } else if let Some(idx_str) = id_str.strip_prefix("open-session-") {
+                        if let Ok(idx) = idx_str.parse::<usize>() {
+                            let state = app.state::<AppState>();
+                            let sessions = state.cached_sessions.lock().unwrap().clone();
+                            let mut active: Vec<&SessionInfo> = sessions.iter()
+                                .filter(|s| is_session_active(s))
+                                .collect();
+                            active.sort_by_key(|s| s.is_subagent);
+                            if let Some(s) = active.get(idx) {
+                                // Show the main window and emit the session to open.
+                                if let Some(w) = app.get_webview_window("main") {
+                                    let _ = w.show();
+                                    let _ = w.set_focus();
+                                }
+                                let _ = app.emit("open-session", s.jsonl_path.clone());
+                            }
+                        }
                     }
-                    _ => {}
                 })
                 .build(app)?;
+
+            // Background thread to flush deferred tray rebuilds once the
+            // grace period after a tray click has elapsed.
+            {
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(TRAY_MENU_GRACE_SECS));
+                        flush_pending_tray_rebuild(&app_handle);
+                    }
+                });
+            }
 
             Ok(())
         })
@@ -891,6 +1217,15 @@ pub fn run() {
             get_sources_config,
             set_source_enabled,
             restart_app,
+            get_notification_mode,
+            set_notification_mode,
+            open_notification_settings,
+            toggle_overlay,
+            center_overlay,
+            show_main_window,
+            open_session_from_overlay,
+            get_tts_voices,
+            speak_text,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

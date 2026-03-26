@@ -805,6 +805,7 @@ fn build_session_from_sqlite(
         pid,
         pid_precise,
         last_skill: None,
+        context_percent: None,
         agent_source: "codex".to_string(),
         last_outcome: None,
     })
@@ -994,6 +995,7 @@ fn parse_codex_session(
         pid,
         pid_precise,
         last_skill: None,
+        context_percent: None,
         agent_source: "codex".to_string(),
         last_outcome: None,
     })

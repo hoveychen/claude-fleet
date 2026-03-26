@@ -1,10 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useConnectionStore, useDetailStore } from "../store";
+import { useConnectionStore, useDetailStore, useOverlayStore } from "../store";
+import { getItem, setItem } from "../storage";
+import { playChime, speakText, getVoices, CHIME_PRESETS, type ChimePreset, type TtsVoice } from "../audio";
 import { AccountInfo } from "./AccountInfo";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { ThemeToggle } from "./ThemeToggle";
+import { AgentSourceIcon } from "./SessionCard";
 import styles from "./SettingsPanel.module.css";
 
 interface HookSetupPlan {
@@ -19,7 +23,50 @@ interface SourceInfo {
   available: boolean;
 }
 
-type SettingsTab = "appearance" | "connection" | "hooks" | "sources" | "account";
+type NotificationMode = "all" | "user_action" | "none";
+type TtsMode = "chime_and_speech" | "chime_only" | "off";
+type SettingsTab = "appearance" | "connection" | "hooks" | "sources" | "notifications" | "account";
+
+const tabIcons: Record<SettingsTab, React.ReactNode> = {
+  appearance: (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="8" cy="8" r="3" />
+      <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" />
+    </svg>
+  ),
+  connection: (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M6 10l4-4" />
+      <path d="M9.5 3.5l1-1a2.12 2.12 0 0 1 3 3l-1 1M6.5 12.5l-1 1a2.12 2.12 0 0 1-3-3l1-1" />
+    </svg>
+  ),
+  hooks: (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M5 2v6a3 3 0 0 0 6 0V5" />
+      <path d="M8 14v-2" />
+      <path d="M5 14h6" />
+    </svg>
+  ),
+  sources: (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <ellipse cx="8" cy="4" rx="5" ry="2" />
+      <path d="M3 4v4c0 1.1 2.24 2 5 2s5-.9 5-2V4" />
+      <path d="M3 8v4c0 1.1 2.24 2 5 2s5-.9 5-2V8" />
+    </svg>
+  ),
+  notifications: (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M6 13a2 2 0 0 0 4 0" />
+      <path d="M12 7c0-2.76-1.79-5-4-5S4 4.24 4 7c0 3-1.5 4.5-2 5h12c-.5-.5-2-2-2-5z" />
+    </svg>
+  ),
+  account: (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="8" cy="5" r="3" />
+      <path d="M2.5 14a5.5 5.5 0 0 1 11 0" />
+    </svg>
+  ),
+};
 
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
@@ -65,6 +112,85 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
     }
   }, []);
 
+  // ── Notifications state ─────────────────────────────────────────────────
+  const [notifMode, setNotifMode] = useState<NotificationMode>(
+    () => (getItem("notification-mode") as NotificationMode) || "user_action",
+  );
+  const [notifPermission, setNotifPermission] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    isPermissionGranted().then(setNotifPermission).catch(() => {});
+  }, []);
+
+  const handleNotifModeChange = useCallback((mode: NotificationMode) => {
+    setNotifMode(mode);
+    setItem("notification-mode", mode);
+    invoke("set_notification_mode", { mode }).catch(() => {});
+  }, []);
+
+  const handleRequestPermission = useCallback(async () => {
+    const result = await requestPermission();
+    if (result === "granted") {
+      setNotifPermission(true);
+    } else {
+      // Permission denied — open system settings
+      invoke("open_notification_settings").catch(() => {});
+    }
+  }, []);
+
+  // ── TTS state ──────────────────────────────────────────────────────────
+  const [ttsMode, setTtsMode] = useState<TtsMode>(
+    () => (getItem("tts-mode") as TtsMode) || "off",
+  );
+
+  const handleTtsModeChange = useCallback((mode: TtsMode) => {
+    setTtsMode(mode);
+    setItem("tts-mode", mode);
+  }, []);
+
+  // ── Chime preset state ────────────────────────────────────────────────
+  const [chimePreset, setChimePreset] = useState<ChimePreset>(
+    () => (getItem("chime-sound") as ChimePreset) || "ding_dong",
+  );
+
+  const handleChimeChange = useCallback((preset: ChimePreset) => {
+    setChimePreset(preset);
+    setItem("chime-sound", preset);
+    playChime(preset);
+  }, []);
+
+  // ── TTS voice state ───────────────────────────────────────────────────
+  const [ttsVoice, setTtsVoice] = useState(() => getItem("tts-voice") || "");
+  const [voices, setVoices] = useState<TtsVoice[]>([]);
+
+  useEffect(() => {
+    getVoices().then(setVoices);
+  }, []);
+
+  const handleVoiceChange = useCallback((uri: string) => {
+    setTtsVoice(uri);
+    setItem("tts-voice", uri);
+  }, []);
+
+  // Sync notification mode to backend on mount
+  useEffect(() => {
+    invoke("set_notification_mode", { mode: notifMode }).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Personalized mascot state ──────────────────────────────────────────
+  const [personalizedMascot, setPersonalizedMascot] = useState(
+    () => getItem("personalized-mascot") !== "false",
+  );
+
+  const handleTogglePersonalizedMascot = useCallback((enabled: boolean) => {
+    setPersonalizedMascot(enabled);
+    setItem("personalized-mascot", enabled ? "true" : "false");
+  }, []);
+
+  // ── Overlay state (shared via store) ─────────────────────────────────────
+  const overlayEnabled = useOverlayStore((s) => s.enabled);
+  const setOverlayEnabled = useOverlayStore((s) => s.setEnabled);
+
   const handleSwitchConnection = useCallback(async () => {
     await useDetailStore.getState().close();
     await disconnect();
@@ -78,6 +204,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
     { key: "connection", label: t("settings.connection") },
     { key: "hooks", label: t("settings.hooks") },
     { key: "sources", label: t("settings.sources") },
+    { key: "notifications", label: t("settings.notifications") },
     { key: "account", label: t("account.panel_title") },
   ];
 
@@ -101,6 +228,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                 className={`${styles.menu_item} ${activeTab === tab.key ? styles.menu_item_active : ""}`}
                 onClick={() => setActiveTab(tab.key)}
               >
+                {tabIcons[tab.key]}
                 {tab.label}
               </button>
             ))}
@@ -118,6 +246,38 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                 <div className={styles.row}>
                   <span className={styles.row_label}>{t("settings.language")}</span>
                   <LanguageSwitcher />
+                </div>
+                <div className={styles.row}>
+                  <div>
+                    <span className={styles.row_label}>{t("settings.personalized_mascot")}</span>
+                    <span className={styles.row_label} style={{ fontSize: 11, color: "var(--color-text-dim)", display: "block", marginTop: 2 }}>
+                      {t("settings.personalized_mascot_desc")}
+                    </span>
+                  </div>
+                  <label className={styles.toggle}>
+                    <input
+                      type="checkbox"
+                      checked={personalizedMascot}
+                      onChange={(e) => handleTogglePersonalizedMascot(e.target.checked)}
+                    />
+                    <span className={styles.toggle_slider} />
+                  </label>
+                </div>
+                <div className={styles.row}>
+                  <div>
+                    <span className={styles.row_label}>{t("settings.overlay")}</span>
+                    <span className={styles.row_label} style={{ fontSize: 11, color: "var(--color-text-dim)", display: "block", marginTop: 2 }}>
+                      {t("settings.overlay_desc")}
+                    </span>
+                  </div>
+                  <label className={styles.toggle}>
+                    <input
+                      type="checkbox"
+                      checked={overlayEnabled}
+                      onChange={(e) => setOverlayEnabled(e.target.checked)}
+                    />
+                    <span className={styles.toggle_slider} />
+                  </label>
                 </div>
               </div>
             )}
@@ -180,6 +340,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                 {sources.map((source) => (
                   <div className={styles.row} key={source.name}>
                     <div className={styles.source_row}>
+                      <AgentSourceIcon source={source.name} />
                       <span className={styles.row_label}>
                         {t(`settings.source_name.${source.name}`)}
                       </span>
@@ -210,6 +371,136 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                     </button>
                   </div>
                 )}
+              </div>
+            )}
+
+            {activeTab === "notifications" && (
+              <div className={styles.section}>
+                <div className={styles.section_title}>{t("settings.notification_mode")}</div>
+                {(["all", "user_action", "none"] as const).map((mode) => (
+                  <label className={styles.radio_row} key={mode}>
+                    <input
+                      type="radio"
+                      name="notif-mode"
+                      checked={notifMode === mode}
+                      onChange={() => handleNotifModeChange(mode)}
+                      className={styles.radio_input}
+                    />
+                    <div className={styles.radio_label}>
+                      <span className={styles.radio_title}>
+                        {t(`settings.notify_${mode}`)}
+                      </span>
+                      <span className={styles.radio_desc}>
+                        {t(`settings.notify_${mode}_desc`)}
+                      </span>
+                    </div>
+                  </label>
+                ))}
+
+                <div className={styles.section_title} style={{ marginTop: 18 }}>
+                  {t("settings.tts")}
+                </div>
+                {(["chime_and_speech", "chime_only", "off"] as const).map((mode) => (
+                  <label className={styles.radio_row} key={mode}>
+                    <input
+                      type="radio"
+                      name="tts-mode"
+                      checked={ttsMode === mode}
+                      onChange={() => handleTtsModeChange(mode)}
+                      className={styles.radio_input}
+                    />
+                    <div className={styles.radio_label}>
+                      <span className={styles.radio_title}>
+                        {t(`settings.tts_${mode}`)}
+                      </span>
+                      <span className={styles.radio_desc}>
+                        {t(`settings.tts_${mode}_desc`)}
+                      </span>
+                    </div>
+                  </label>
+                ))}
+
+                {ttsMode !== "off" && (
+                  <>
+                    <div className={styles.section_title} style={{ marginTop: 18 }}>
+                      {t("settings.chime_sound")}
+                    </div>
+                    <div className={styles.row}>
+                      <select
+                        className={styles.select}
+                        value={chimePreset}
+                        onChange={(e) => handleChimeChange(e.target.value as ChimePreset)}
+                      >
+                        {CHIME_PRESETS.map((p) => (
+                          <option key={p} value={p}>{t(`settings.chime_${p}`)}</option>
+                        ))}
+                      </select>
+                      <button
+                        className={styles.preview_btn}
+                        onClick={() => playChime(chimePreset)}
+                      >
+                        {t("settings.preview")}
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {ttsMode === "chime_and_speech" && voices.length > 0 && (
+                  <>
+                    <div className={styles.section_title} style={{ marginTop: 18 }}>
+                      {t("settings.tts_voice")}
+                    </div>
+                    <div className={styles.row}>
+                      <select
+                        className={styles.select}
+                        value={ttsVoice}
+                        onChange={(e) => handleVoiceChange(e.target.value)}
+                      >
+                        <option value="">{t("settings.tts_voice_default")}</option>
+                        {voices.map((v) => (
+                          <option key={v.name} value={v.name}>
+                            {v.name} ({v.lang})
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        className={styles.preview_btn}
+                        onClick={() => speakText(t("settings.tts_preview_text"), ttsVoice || undefined)}
+                      >
+                        {t("settings.preview")}
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                <div className={styles.section_title} style={{ marginTop: 18 }}>
+                  {t("settings.notification_permission")}
+                </div>
+                <div className={styles.row}>
+                  {notifPermission === true && (
+                    <span className={styles.hooks_ok}>
+                      {t("settings.notification_granted")}
+                    </span>
+                  )}
+                  {notifPermission === false && (
+                    <div className={styles.notif_denied_row}>
+                      <span className={styles.notif_denied_text}>
+                        {t("settings.notification_denied")}
+                      </span>
+                      <button
+                        className={styles.hooks_install_btn}
+                        onClick={handleRequestPermission}
+                      >
+                        {t("settings.notification_open_settings")}
+                      </button>
+                    </div>
+                  )}
+                  {notifPermission === null && (
+                    <span className={styles.row_label} style={{ color: "var(--color-text-dim)" }}>
+                      {t("account.loading")}
+                    </span>
+                  )}
+                </div>
               </div>
             )}
 

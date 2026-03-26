@@ -128,11 +128,16 @@ function handleIPC(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "install_fleet_skill":
       return { success: true, path: "/Users/demo/.claude/skills/fleet.md" };
     case "generate_mascot_quips":
-      return [
-        "All agents are running smoothly!",
-        "Token throughput looking great today.",
-        "Your fleet is in good shape, captain!",
-      ];
+      return {
+        busy: [
+          "All agents are running smoothly!",
+          "Token throughput looking great today.",
+        ],
+        idle: [
+          "Your fleet is in good shape, captain!",
+          "Nice work on that last task!",
+        ],
+      };
 
     // Store plugin — must match expected return types
     case "plugin:store|load":

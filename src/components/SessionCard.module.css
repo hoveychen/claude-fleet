@@ -226,6 +226,9 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .preview {
@@ -258,6 +261,8 @@
 }
 
 .tokens { margin-left: auto; }
+.context { color: var(--color-text-dim); }
+.context_high { color: var(--color-warning, #e8a838); }
 .time { color: var(--color-text-dim); }
 
 /* Stop button */

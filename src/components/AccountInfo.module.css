@@ -107,6 +107,9 @@
   color: var(--color-text);
   text-align: right;
   word-break: break-all;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .usage_item {

@@ -8,7 +8,7 @@ import { SessionDetail } from "./components/SessionDetail";
 import { SessionList } from "./components/SessionList";
 import { WaitingAlerts } from "./components/WaitingAlerts";
 import { Wizard } from "./components/Wizard";
-import { type Connection, resolveTheme, useConnectionStore, useDetailStore, useUIStore } from "./store";
+import { type Connection, resolveTheme, useConnectionStore, useDetailStore, useOverlayStore, useSessionsStore, useUIStore } from "./store";
 import { getItem, setItem } from "./storage";
 import i18n from "./i18n";
 
@@ -33,6 +33,39 @@ function App() {
       unlisten.then((fn) => fn());
     };
   }, [disconnect]);
+
+  // Open a session detail when the user clicks an agent in the tray menu.
+  useEffect(() => {
+    const unlisten = listen<string>("open-session", (event) => {
+      const jsonlPath = event.payload;
+      const session = useSessionsStore.getState().sessions.find(
+        (s) => s.jsonlPath === jsonlPath,
+      );
+      if (session) {
+        useDetailStore.getState().open(session);
+      }
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  // Sync overlay store when overlay is closed from the overlay window (right-click)
+  useEffect(() => {
+    const unlisten = listen("overlay-disabled", () => {
+      // Update store + storage without re-invoking toggle_overlay (already done by overlay)
+      setItem("overlay-enabled", "false");
+      useOverlayStore.setState({ enabled: false });
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
+  // Restore overlay on app startup if it was previously enabled
+  useEffect(() => {
+    if (useOverlayStore.getState().enabled) {
+      invoke("toggle_overlay", { visible: true }).catch(() => {});
+    }
+  }, []);
 
   // Sync initial UI locale to the Rust backend.
   useEffect(() => {

@@ -20,6 +20,12 @@ const ALL_KEYS = [
   "onboarding-dismissed",
   "wizard-completed",
   "hooks-banner-dismissed",
+  "notification-mode",
+  "personalized-mascot",
+  "overlay-enabled",
+  "tts-mode",
+  "chime-sound",
+  "tts-voice",
 ] as const;
 
 /**

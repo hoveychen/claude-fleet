@@ -1014,26 +1014,37 @@ fn connect_remote_start_probe(
                             );
                             an.lock().unwrap().remove(&session_id);
 
-                            if let Some(result) = result {
+                            if let Some(ref result) = result {
                                 so.lock().unwrap().insert(session_id.clone(), result.tags.clone());
+                            }
 
-                                if result.tags.contains(&"needs_input".to_string()) {
-                                    let summary = result.summary
-                                        .unwrap_or_else(|| "Waiting for input".to_string());
-                                    let alert = crate::backend::WaitingAlert {
-                                        session_id: session_id.clone(),
-                                        workspace_name: display_name.clone(),
-                                        summary: summary.clone(),
-                                        detected_at_ms: SystemTime::now()
-                                            .duration_since(UNIX_EPOCH)
-                                            .unwrap_or_default()
-                                            .as_millis() as u64,
-                                        jsonl_path,
-                                    };
-                                    wa.lock().unwrap().insert(session_id, alert);
-                                    let alerts: Vec<crate::backend::WaitingAlert> =
-                                        wa.lock().unwrap().values().cloned().collect();
-                                    let _ = app_bg.emit("waiting-alerts-updated", &alerts);
+                            let has_needs_input = result.as_ref()
+                                .map_or(false, |r| r.tags.contains(&"needs_input".to_string()));
+                            let mode = crate::local_backend::get_notification_mode(&app_bg);
+
+                            let should_alert = mode == "all" || has_needs_input;
+                            let should_os_notify = mode != "none" && (mode == "all" || has_needs_input);
+
+                            if should_alert {
+                                let summary = result.as_ref().and_then(|r| r.summary.clone())
+                                    .unwrap_or_else(|| crate::local_backend::fallback_summary_for_tags(
+                                        result.as_ref().map(|r| r.tags.as_slice()).unwrap_or(&[])
+                                    ));
+                                let alert = crate::backend::WaitingAlert {
+                                    session_id: session_id.clone(),
+                                    workspace_name: display_name.clone(),
+                                    summary: summary.clone(),
+                                    detected_at_ms: SystemTime::now()
+                                        .duration_since(UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_millis() as u64,
+                                    jsonl_path,
+                                };
+                                wa.lock().unwrap().insert(session_id, alert);
+                                let alerts: Vec<crate::backend::WaitingAlert> =
+                                    wa.lock().unwrap().values().cloned().collect();
+                                let _ = app_bg.emit("waiting-alerts-updated", &alerts);
+                                if should_os_notify {
                                     crate::local_backend::send_os_notification(
                                         &app_bg, &display_name, &summary,
                                     );

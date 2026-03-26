@@ -83,6 +83,8 @@ html, body, #root {
   /* Mascot panel */
   --mascot-bg: #1a2540;
   --mascot-text: rgba(200, 210, 230, 0.8);
+  --mascot-bubble-bg: rgba(255, 255, 255, 0.12);
+  --mascot-bubble-border: rgba(255, 255, 255, 0.18);
   --mascot-accessory-fill: #2a3050;
   --mascot-accessory-stroke: #3a4570;
   --mascot-accessory-accent: #4a5580;
@@ -164,6 +166,8 @@ html, body, #root {
   /* Mascot panel */
   --mascot-bg: #e0dff0;
   --mascot-text: rgba(60, 60, 90, 0.85);
+  --mascot-bubble-bg: rgba(255, 255, 255, 0.85);
+  --mascot-bubble-border: rgba(100, 100, 140, 0.3);
   --mascot-accessory-fill: #c8c8e0;
   --mascot-accessory-stroke: #a0a0c0;
   --mascot-accessory-accent: #9090b0;

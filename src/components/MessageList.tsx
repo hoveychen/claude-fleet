@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, memo } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, memo } from "react";
+import { useTranslation } from "react-i18next";
 import type {
   ContentBlock,
   RawMessage,
@@ -228,10 +229,12 @@ interface Props {
 const PAGE_SIZE = 100;
 
 export function MessageList({ messages, isLoading }: Props) {
+  const { t } = useTranslation();
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const topSentinelRef = useRef<HTMLDivElement>(null);
-  const [visibleStart, setVisibleStart] = useState(0);
+  // visibleStart tracks the actual start index into displayMsgs.
+  // -1 is a sentinel meaning "show the tail (last PAGE_SIZE)".
+  const [visibleStart, setVisibleStart] = useState(-1);
   // Saved before loading more; used by useLayoutEffect to restore scroll position
   const scrollAnchor = useRef<{ scrollTop: number; scrollHeight: number } | null>(null);
 
@@ -250,20 +253,26 @@ export function MessageList({ messages, isLoading }: Props) {
       displayMsgs.length < prevCountRef.current ||
       (prevCountRef.current === 0 && displayMsgs.length > 0)
     ) {
-      setVisibleStart(0);
+      setVisibleStart(-1);
       sessionSwitchedRef.current = true;
     }
     prevCountRef.current = displayMsgs.length;
   }, [displayMsgs.length]);
 
-  const effectiveStart = Math.max(visibleStart, displayMsgs.length - PAGE_SIZE);
+  // Compute effective start: -1 means "tail mode" (follow latest messages)
+  const tailStart = Math.max(0, displayMsgs.length - PAGE_SIZE);
+  const effectiveStart = visibleStart === -1 ? tailStart : Math.min(visibleStart, tailStart);
   const visibleMsgs = displayMsgs.slice(effectiveStart);
   const hiddenCount = effectiveStart;
 
-  // When effectiveStart advances due to new tail messages, save scroll anchor
-  // so the layout effect below can compensate for the removed top element(s)
+  // When in tail mode and new messages arrive, the window auto-advances.
+  // When user has scrolled up (visibleStart >= 0), the window stays put and grows.
   const prevEffectiveStartRef = useRef(effectiveStart);
-  if (effectiveStart > prevEffectiveStartRef.current && !scrollAnchor.current) {
+  if (
+    visibleStart === -1 &&
+    effectiveStart > prevEffectiveStartRef.current &&
+    !scrollAnchor.current
+  ) {
     const scroller = listRef.current?.parentElement;
     if (scroller && listRef.current) {
       scrollAnchor.current = {
@@ -285,29 +294,16 @@ export function MessageList({ messages, isLoading }: Props) {
     scrollAnchor.current = null;
   });
 
-  // Observe the top sentinel relative to the actual scroll container (.scroll_area)
-  useEffect(() => {
-    const sentinel = topSentinelRef.current;
-    if (!sentinel || hiddenCount === 0) return;
+  const loadMore = useCallback(() => {
+    if (hiddenCount === 0 || scrollAnchor.current) return;
     const scroller = listRef.current?.parentElement;
-    if (!scroller) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries[0].isIntersecting) return;
-        // scrollAnchor acts as a loading guard: skip if a load is already in flight
-        if (scrollAnchor.current) return;
-        scrollAnchor.current = {
-          scrollTop: scroller.scrollTop,
-          scrollHeight: listRef.current!.scrollHeight,
-        };
-        setVisibleStart((prev) => Math.max(0, prev - PAGE_SIZE));
-      },
-      { root: scroller, threshold: 0 }
-    );
-
-    observer.observe(sentinel);
-    return () => observer.disconnect();
+    if (scroller && listRef.current) {
+      scrollAnchor.current = {
+        scrollTop: scroller.scrollTop,
+        scrollHeight: listRef.current.scrollHeight,
+      };
+    }
+    setVisibleStart(Math.max(0, prevEffectiveStartRef.current - PAGE_SIZE));
   }, [hiddenCount]);
 
   // Auto-scroll to bottom when session switches or when user is already near the bottom
@@ -334,8 +330,11 @@ export function MessageList({ messages, isLoading }: Props) {
 
   return (
     <div ref={listRef} className={styles.list}>
-      {/* Top sentinel – triggers scroll-load when it enters the viewport */}
-      <div ref={topSentinelRef} className={hiddenCount > 0 ? styles.sentinel : undefined} />
+      {hiddenCount > 0 && (
+        <button className={styles.load_more} onClick={loadMore}>
+          ↑ {t("detail.load_more", { count: Math.min(PAGE_SIZE, hiddenCount) })}
+        </button>
+      )}
       {visibleMsgs.map((msg, i) => (
         <MessageRow key={msg.uuid ?? (effectiveStart + i)} msg={msg} resultMap={resultMap} />
       ))}

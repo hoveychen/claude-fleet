@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useDetailStore } from "../store";
 import type { SessionInfo } from "../types";
 import { MessageList } from "./MessageList";
+import { AgentSourceIcon, useMultiSource } from "./SessionCard";
 import { SkillHistory } from "./SkillHistory";
 import styles from "./InspectModal.module.css";
 
@@ -13,6 +14,7 @@ interface Props {
 
 export function InspectModal({ session, onClose }: Props) {
   const { t } = useTranslation();
+  const multiSource = useMultiSource();
   const { messages, isLoading, open, close } = useDetailStore();
 
   useEffect(() => {
@@ -37,6 +39,7 @@ export function InspectModal({ session, onClose }: Props) {
         {/* Header */}
         <div className={styles.header}>
           <div className={styles.header_left}>
+            {multiSource && <AgentSourceIcon source={session.agentSource} />}
             <span className={styles.workspace}>{session.workspaceName}</span>
             {session.isSubagent ? (
               <span className={styles.tag_subagent}>

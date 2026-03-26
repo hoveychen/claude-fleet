@@ -69,6 +69,11 @@ pub struct SessionInfo {
     /// a matching --resume flag — stopping may affect sibling sessions.
     pub pid_precise: bool,
     pub last_skill: Option<String>,
+    /// Approximate context-window utilisation (0.0 – 1.0) derived from the
+    /// last finalized assistant message's usage fields.  `None` when no
+    /// usage data is available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_percent: Option<f64>,
     /// Source of this session: "claude-code" or "cursor"
     pub agent_source: String,
     /// Semantic outcome tags from the last completed turn (e.g. "bug_fixed",
@@ -309,10 +314,10 @@ fn determine_status(
             .map(|i| i + 1)
             .unwrap_or(0);
 
-        // Look at the LAST incomplete (stop_reason=null) assistant message in the turn.
-        // This tells us what the model is currently outputting, without false-positives
-        // from blocks that appeared earlier in the same turn.
-        let last_partial = last_lines[turn_start..].iter().rev().find(|v| {
+        // Look at the LAST incomplete (stop_reason=null) assistant message in the turn,
+        // but only if no completed assistant message exists after it. Stale partials
+        // left behind after a completed response must not override the final status.
+        let last_partial_idx = last_lines[turn_start..].iter().rposition(|v| {
             if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
                 return false;
             }
@@ -321,6 +326,27 @@ fn determine_status(
                 .and_then(|m| m.get("stop_reason"));
             // stop_reason absent or null → still streaming
             stop.map_or(true, |s| s.is_null())
+        });
+
+        // Check whether a completed assistant message appears after the last partial.
+        // If so, the partial is stale and should be ignored.
+        let last_partial = last_partial_idx.and_then(|pidx| {
+            let abs_pidx = turn_start + pidx;
+            let has_completed_after = last_lines[abs_pidx + 1..].iter().any(|v| {
+                if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+                    return false;
+                }
+                let stop = v
+                    .get("message")
+                    .and_then(|m| m.get("stop_reason"));
+                // stop_reason present and non-null → completed
+                stop.map_or(false, |s| !s.is_null())
+            });
+            if has_completed_after {
+                None
+            } else {
+                Some(&last_lines[abs_pidx])
+            }
         });
 
         if let Some(partial) = last_partial {
@@ -416,6 +442,60 @@ fn determine_status(
     }
 }
 
+// ── Context window helpers ────────────────────────────────────────────────────
+
+/// Best-effort lookup of a model's input-context-window size (in tokens).
+/// Returns `None` when the model family is unrecognised so the caller can
+/// decide whether to fall back to a default or skip the computation entirely.
+pub fn context_window_for_model(model: &str) -> Option<u64> {
+    let m = model.to_lowercase();
+
+    // ── Anthropic / Claude ──────────────────────────────────────────────
+    // All Claude 3 / 3.5 / 4.x models: 200 000 input tokens.
+    if m.starts_with("claude-") {
+        return Some(200_000);
+    }
+
+    // ── OpenAI ──────────────────────────────────────────────────────────
+    // o3 / o4-mini: 200 000
+    if m.starts_with("o3") || m.starts_with("o4") {
+        return Some(200_000);
+    }
+    // GPT-4o / GPT-4o-mini: 128 000
+    if m.starts_with("gpt-4o") {
+        return Some(128_000);
+    }
+    // GPT-4.1: 1 048 576
+    if m.starts_with("gpt-4.1") {
+        return Some(1_048_576);
+    }
+    // GPT-4-turbo / GPT-4-1106+: 128 000
+    if m.starts_with("gpt-4-turbo") || m.starts_with("gpt-4-1106") || m.starts_with("gpt-4-0125") {
+        return Some(128_000);
+    }
+    // GPT-4 (base 8k)
+    if m.starts_with("gpt-4") {
+        return Some(8_192);
+    }
+
+    // ── Google ──────────────────────────────────────────────────────────
+    if m.contains("gemini") {
+        return Some(1_000_000);
+    }
+
+    None
+}
+
+/// Compute context-window utilisation (0.0 – 1.0) from raw token counts.
+/// Returns `None` when the model is unrecognised.
+pub fn compute_context_percent(input_tokens: u64, model: Option<&str>) -> Option<f64> {
+    let window = context_window_for_model(model?)?;
+    if window == 0 {
+        return None;
+    }
+    Some((input_tokens as f64 / window as f64).min(1.0))
+}
+
 fn compute_token_stats(lines: &[&str]) -> (f64, u64) {
     let mut total_output: u64 = 0;
     let mut timed_tokens: Vec<(f64, u64)> = Vec::new();
@@ -493,6 +573,65 @@ fn compute_token_stats(lines: &[&str]) -> (f64, u64) {
     };
 
     (speed, total_output)
+}
+
+/// Extract context-window usage from the last finalized assistant message in
+/// a Claude-Code JSONL session.  Returns `(input_tokens_used, model_name)`.
+pub fn extract_last_context_usage(lines: &[&str]) -> Option<(u64, String)> {
+    let mut last: Option<(u64, String)> = None;
+    let mut seen_msg_ids: HashSet<String> = HashSet::new();
+
+    for line in lines {
+        let Ok(v): Result<Value, _> = serde_json::from_str(line) else {
+            continue;
+        };
+        if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(msg) = v.get("message").and_then(|m| m.as_object()) else {
+            continue;
+        };
+        if msg.get("stop_reason").map_or(true, |s| s.is_null()) {
+            continue;
+        }
+        let msg_id = msg
+            .get("id")
+            .and_then(|i| i.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if !msg_id.is_empty() {
+            if seen_msg_ids.contains(&msg_id) {
+                continue;
+            }
+            seen_msg_ids.insert(msg_id);
+        }
+
+        let usage = msg.get("usage");
+        let input = usage
+            .and_then(|u| u.get("input_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+        let cache_create = usage
+            .and_then(|u| u.get("cache_creation_input_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+        let cache_read = usage
+            .and_then(|u| u.get("cache_read_input_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+        let total_input = input + cache_create + cache_read;
+
+        if total_input > 0 {
+            let model = msg
+                .get("model")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
+            last = Some((total_input, model));
+        }
+    }
+
+    last
 }
 
 fn extract_model(last_lines: &[Value]) -> Option<String> {
@@ -635,6 +774,8 @@ pub fn parse_session_info(
 
     let status = determine_status(&last_n, age.as_secs_f64(), hook_state);
     let (token_speed, total_output_tokens) = compute_token_stats(&all_lines);
+    let context_percent = extract_last_context_usage(&all_lines)
+        .and_then(|(used, model)| compute_context_percent(used, Some(&model)));
     let last_message_preview = extract_last_text(&last_n);
 
     let slug = last_n
@@ -683,6 +824,7 @@ pub fn parse_session_info(
         thinking_level,
         pid,
         pid_precise,
+        context_percent,
         last_skill,
         agent_source: "claude-code".to_string(),
         last_outcome: None,
@@ -1146,6 +1288,7 @@ mod tests {
             pid: None,
             pid_precise: false,
             last_skill: None,
+            context_percent: None,
             agent_source: "claude-code".into(),
             last_outcome: None,
         }

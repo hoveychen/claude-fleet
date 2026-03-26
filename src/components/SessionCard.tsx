@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { useSessionsStore } from "../store";
 import type { SessionInfo, SessionStatus } from "../types";
 import styles from "./SessionCard.module.css";
 
@@ -112,7 +113,7 @@ export function OpenClawIcon() {
   );
 }
 
-function AgentSourceIcon({ source }: { source: string }) {
+export function AgentSourceIcon({ source }: { source: string }) {
   switch (source) {
     case "claude-code":
       return <ClaudeIcon />;
@@ -271,8 +272,17 @@ interface Props {
   hideHeader?: boolean;
 }
 
+export function useMultiSource() {
+  const sessions = useSessionsStore((s) => s.sessions);
+  return useMemo(() => {
+    const sources = new Set(sessions.map((s) => s.agentSource));
+    return sources.size > 1;
+  }, [sessions]);
+}
+
 export function SessionCard({ session, isSelected, onClick, variant, hideHeader }: Props) {
   const { t } = useTranslation();
+  const multiSource = useMultiSource();
   const isActive = ["thinking", "executing", "streaming", "processing", "waitingInput", "delegating"].includes(
     session.status
   );
@@ -341,9 +351,6 @@ export function SessionCard({ session, isSelected, onClick, variant, hideHeader 
         <span className={styles.tag_source} title={session.agentSource}>
           <AgentSourceIcon source={session.agentSource} />
         </span>
-        {session.ideName && (
-          <span className={styles.tag_ide} title={t("card.tip_ide", { name: session.ideName })}>{session.ideName}</span>
-        )}
         {session.model && (
           <span className={styles.tag_model} title={t("card.tip_model", { model: session.model })}>{formatModel(session.model)}</span>
         )}
@@ -367,6 +374,7 @@ export function SessionCard({ session, isSelected, onClick, variant, hideHeader 
       {/* AI Title (main session) or agent description (subagent) */}
       {(session.aiTitle || (session.isSubagent && session.agentDescription)) && (
         <p className={styles.ai_title} title={session.aiTitle ?? session.agentDescription ?? undefined}>
+          {multiSource && <AgentSourceIcon source={session.agentSource} />}
           {session.aiTitle ?? session.agentDescription}
         </p>
       )}
@@ -382,6 +390,14 @@ export function SessionCard({ session, isSelected, onClick, variant, hideHeader 
         <span className={styles.tokens} title={t("card.tip_tokens")}>
           {session.totalOutputTokens.toLocaleString()} {t("tokens")}
         </span>
+        {session.contextPercent != null && (
+          <span
+            className={`${styles.context} ${session.contextPercent >= 0.8 ? styles.context_high : ""}`}
+            title={t("card.tip_context", { percent: Math.round(session.contextPercent * 100) })}
+          >
+            ctx {Math.round(session.contextPercent * 100)}%
+          </span>
+        )}
         <TimeAgo ms={session.lastActivityMs} />
       </div>
     </div>

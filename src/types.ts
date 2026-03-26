@@ -33,6 +33,7 @@ export interface SessionInfo {
   pid: number | null;
   pidPrecise: boolean;
   lastSkill: string | null;
+  contextPercent: number | null;
   agentSource: "claude-code" | "cursor" | "openclaw" | "codex";
   lastOutcome: SessionOutcome[] | null;
 }

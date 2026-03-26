@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::session::{SessionInfo, SessionStatus};
+use crate::session::{SessionInfo, SessionStatus, compute_context_percent};
 
 /// URI prefix for Cursor session identifiers (used in jsonl_path field).
 pub const CURSOR_URI_PREFIX: &str = "cursor://";
@@ -169,8 +169,9 @@ fn estimate_tokens_from_text(text: &str) -> u64 {
 ///
 /// Returns a map of composer_id → (token_speed, total_output_tokens).
 /// Token speed is computed over the last 5-minute window, matching Claude Code's approach.
-fn estimate_cursor_token_stats(composer_ids: &[&str]) -> HashMap<String, (f64, u64)> {
-    let mut result: HashMap<String, (f64, u64)> = HashMap::new();
+/// Returns per-composer (speed, total_output, last_input_tokens).
+fn estimate_cursor_token_stats(composer_ids: &[&str]) -> HashMap<String, (f64, u64, Option<u64>)> {
+    let mut result: HashMap<String, (f64, u64, Option<u64>)> = HashMap::new();
     if composer_ids.is_empty() {
         return result;
     }
@@ -192,8 +193,8 @@ fn estimate_cursor_token_stats(composer_ids: &[&str]) -> HashMap<String, (f64, u
         Err(_) => return result,
     };
 
-    // Per-composer accumulators: (total_output, timed_tokens)
-    let mut accums: HashMap<String, (u64, Vec<(f64, u64)>)> = HashMap::new();
+    // Per-composer accumulators: (total_output, timed_tokens, last_input_tokens)
+    let mut accums: HashMap<String, (u64, Vec<(f64, u64)>, u64)> = HashMap::new();
 
     let rows = match stmt.query_map([], |row| {
         let key: String = row.get(0)?;
@@ -258,8 +259,17 @@ fn estimate_cursor_token_stats(composer_ids: &[&str]) -> HashMap<String, (f64, u
             text_tokens + thinking_tokens
         };
 
-        let accum = accums.entry(cid.to_string()).or_insert_with(|| (0, Vec::new()));
+        let accum = accums.entry(cid.to_string()).or_insert_with(|| (0, Vec::new(), 0));
         accum.0 += estimated;
+
+        // Track last assistant bubble's input tokens for context_percent
+        let real_input = b.get("tokenCount")
+            .and_then(|tc| tc.get("inputTokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+        if real_input > 0 {
+            accum.2 = real_input;
+        }
 
         // Parse createdAt for speed calculation
         if let Some(ts_str) = b.get("createdAt").and_then(|t| t.as_str()) {
@@ -276,7 +286,7 @@ fn estimate_cursor_token_stats(composer_ids: &[&str]) -> HashMap<String, (f64, u
         .as_secs_f64();
     let window_start = now - 300.0;
 
-    for (cid, (total_output, timed_tokens)) in &accums {
+    for (cid, (total_output, timed_tokens, last_input)) in &accums {
         let speed = if timed_tokens.len() >= 2 {
             let recent: Vec<_> = timed_tokens
                 .iter()
@@ -300,8 +310,9 @@ fn estimate_cursor_token_stats(composer_ids: &[&str]) -> HashMap<String, (f64, u
             0.0
         };
 
-        if *total_output > 0 || speed > 0.0 {
-            result.insert(cid.clone(), (speed, *total_output));
+        if *total_output > 0 || speed > 0.0 || *last_input > 0 {
+            let ctx = if *last_input > 0 { Some(*last_input) } else { None };
+            result.insert(cid.clone(), (speed, *total_output, ctx));
         }
     }
 
@@ -510,6 +521,10 @@ pub fn scan_cursor_sessions(_cursor_dir: &Path) -> Vec<SessionInfo> {
             pid: None,
             pid_precise: false,
             last_skill: None,
+            context_percent: token_stats
+                .get(&c.composer_id)
+                .and_then(|s| s.2)
+                .and_then(|input| compute_context_percent(input, c.model.as_deref())),
             agent_source: "cursor".to_string(),
             last_outcome: None,
         });

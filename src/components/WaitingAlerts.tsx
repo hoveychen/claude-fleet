@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import type { WaitingAlert } from "../types";
 import { useWaitingAlertsStore } from "../store";
+import { getItem } from "../storage";
+import { playAlertSound, type TtsMode } from "../audio";
 import styles from "./WaitingAlerts.module.css";
 
 function timeAgo(ms: number, t: (key: string, opts?: Record<string, unknown>) => string): string {
@@ -57,17 +59,24 @@ function AlertCard({
   );
 }
 
-/**
- * Floating notification stack — rendered as an overlay in the bottom-right
- * of the main content area.
- */
 export function WaitingAlerts() {
   const { alerts, setAlerts, refresh, dismiss, dismissedIds } = useWaitingAlertsStore();
+  const spokenIds = useRef(new Set<string>());
 
   useEffect(() => {
     refresh();
     const unlistenPromise = listen<WaitingAlert[]>("waiting-alerts-updated", (e) => {
       setAlerts(e.payload);
+
+      // Chime / TTS for new alerts
+      const ttsMode = (getItem("tts-mode") as TtsMode) || "off";
+      if (ttsMode === "off") return;
+      for (const alert of e.payload) {
+        if (!spokenIds.current.has(alert.sessionId)) {
+          spokenIds.current.add(alert.sessionId);
+          playAlertSound(alert.summary);
+        }
+      }
     });
     return () => {
       unlistenPromise.then((u) => u());

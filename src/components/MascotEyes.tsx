@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
-import { useSessionsStore } from "../store";
+import { useOverlayStore, useSessionsStore } from "../store";
+import { getItem } from "../storage";
 import type { SessionInfo, SessionOutcome } from "../types";
 import styles from "./MascotEyes.module.css";
 
@@ -127,17 +128,17 @@ const QUIP_KEYS: Record<MascotMood, string[]> = {
 // ── Click response quips ─────────────────────────────────────────────────────
 
 const CLICK_QUIP_KEYS: Record<MascotMood, string[]> = {
-  excited:     ["mascot.click_excited_1", "mascot.click_excited_2", "mascot.click_excited_3"],
-  focused:     ["mascot.click_focused_1", "mascot.click_focused_2", "mascot.click_focused_3"],
-  anxious:     ["mascot.click_anxious_1", "mascot.click_anxious_2", "mascot.click_anxious_3"],
-  satisfied:   ["mascot.click_satisfied_1", "mascot.click_satisfied_2", "mascot.click_satisfied_3"],
-  bored:       ["mascot.click_bored_1", "mascot.click_bored_2", "mascot.click_bored_3"],
-  lonely:      ["mascot.click_lonely_1", "mascot.click_lonely_2", "mascot.click_lonely_3"],
-  sleepy:      ["mascot.click_sleepy_1", "mascot.click_sleepy_2", "mascot.click_sleepy_3"],
-  attentive:   ["mascot.click_attentive_1", "mascot.click_attentive_2", "mascot.click_attentive_3"],
-  proud:       ["mascot.click_proud_1", "mascot.click_proud_2", "mascot.click_proud_3"],
-  frustrated:  ["mascot.click_frustrated_1", "mascot.click_frustrated_2", "mascot.click_frustrated_3"],
-  embarrassed: ["mascot.click_embarrassed_1", "mascot.click_embarrassed_2", "mascot.click_embarrassed_3"],
+  excited:     ["mascot.click_excited_1", "mascot.click_excited_2", "mascot.click_excited_3", "mascot.click_excited_4", "mascot.click_excited_5", "mascot.click_excited_6"],
+  focused:     ["mascot.click_focused_1", "mascot.click_focused_2", "mascot.click_focused_3", "mascot.click_focused_4", "mascot.click_focused_5", "mascot.click_focused_6"],
+  anxious:     ["mascot.click_anxious_1", "mascot.click_anxious_2", "mascot.click_anxious_3", "mascot.click_anxious_4", "mascot.click_anxious_5", "mascot.click_anxious_6"],
+  satisfied:   ["mascot.click_satisfied_1", "mascot.click_satisfied_2", "mascot.click_satisfied_3", "mascot.click_satisfied_4", "mascot.click_satisfied_5", "mascot.click_satisfied_6"],
+  bored:       ["mascot.click_bored_1", "mascot.click_bored_2", "mascot.click_bored_3", "mascot.click_bored_4", "mascot.click_bored_5", "mascot.click_bored_6"],
+  lonely:      ["mascot.click_lonely_1", "mascot.click_lonely_2", "mascot.click_lonely_3", "mascot.click_lonely_4", "mascot.click_lonely_5", "mascot.click_lonely_6"],
+  sleepy:      ["mascot.click_sleepy_1", "mascot.click_sleepy_2", "mascot.click_sleepy_3", "mascot.click_sleepy_4", "mascot.click_sleepy_5", "mascot.click_sleepy_6"],
+  attentive:   ["mascot.click_attentive_1", "mascot.click_attentive_2", "mascot.click_attentive_3", "mascot.click_attentive_4", "mascot.click_attentive_5", "mascot.click_attentive_6"],
+  proud:       ["mascot.click_proud_1", "mascot.click_proud_2", "mascot.click_proud_3", "mascot.click_proud_4", "mascot.click_proud_5", "mascot.click_proud_6"],
+  frustrated:  ["mascot.click_frustrated_1", "mascot.click_frustrated_2", "mascot.click_frustrated_3", "mascot.click_frustrated_4", "mascot.click_frustrated_5", "mascot.click_frustrated_6"],
+  embarrassed: ["mascot.click_embarrassed_1", "mascot.click_embarrassed_2", "mascot.click_embarrassed_3", "mascot.click_embarrassed_4", "mascot.click_embarrassed_5", "mascot.click_embarrassed_6"],
 };
 
 // ── Eye shape: just solid circle + eyelid positions ──────────────────────────
@@ -276,7 +277,7 @@ const EYE_COLOR = "var(--color-accent)";   // brand accent color
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function MascotEyes() {
+export function MascotEyes({ embedded, onQuip }: { embedded?: boolean; onQuip?: (text: string | null) => void } = {}) {
   const { t, i18n } = useTranslation();
   const { sessions } = useSessionsStore();
   const mood = useMemo(() => deriveMood(sessions), [sessions]);
@@ -293,8 +294,8 @@ export function MascotEyes() {
   const [moodJiggle, setMoodJiggle] = useState(false);
   const [clickReaction, setClickReaction] = useState(false);
   const [clickQuipKey, setClickQuipKey] = useState("");
-  const [generatedQuips, setGeneratedQuips] = useState<string[]>([]);
-  const [generatedClickQuips, setGeneratedClickQuips] = useState<string[]>([]);
+  const [generatedBusyQuips, setGeneratedBusyQuips] = useState<string[]>([]);
+  const [generatedIdleQuips, setGeneratedIdleQuips] = useState<string[]>([]);
 
   const blinkTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const gazeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -425,26 +426,32 @@ export function MascotEyes() {
   }, [mood]);
 
   // ── Dynamic quip generation ────────────────────────────────────────────────
-  const fetchQuips = useCallback(async (currentMood: string, currentSessions: SessionInfo[]) => {
-    const titles = currentSessions
-      .filter((s) => s.aiTitle)
-      .map((s) => s.aiTitle!)
+  const fetchQuips = useCallback(async (currentSessions: SessionInfo[]) => {
+    if (getItem("personalized-mascot") === "false") return;
+    const busyStatuses = ["thinking", "executing", "streaming", "processing", "active", "delegating"];
+    // Recent non-subagent sessions sorted by creation time (newest first)
+    const recentMain = [...currentSessions]
+      .filter((s) => !s.isSubagent && s.aiTitle)
+      .sort((a, b) => b.createdAtMs - a.createdAtMs)
       .slice(0, 10);
 
-    if (titles.length < MIN_TITLES_FOR_GENERATION) return;
+    const busyTitles = recentMain
+      .filter((s) => busyStatuses.includes(s.status))
+      .map((s) => s.aiTitle!);
+    const doneTitles = recentMain
+      .filter((s) => !busyStatuses.includes(s.status))
+      .map((s) => s.aiTitle!);
+
+    if (busyTitles.length + doneTitles.length < MIN_TITLES_FOR_GENERATION) return;
 
     try {
-      const quips = await invoke<string[]>("generate_mascot_quips", {
-        titles,
-        mood: currentMood,
+      const result = await invoke<{ busy: string[]; idle: string[] }>("generate_mascot_quips", {
+        busyTitles,
+        doneTitles,
         locale: i18n.language,
       });
-      if (quips.length > 0) {
-        // Split: first half for normal quips, second half for click quips
-        const mid = Math.ceil(quips.length / 2);
-        setGeneratedQuips(quips.slice(0, mid));
-        setGeneratedClickQuips(quips.slice(mid));
-      }
+      if (result.busy.length > 0) setGeneratedBusyQuips(result.busy);
+      if (result.idle.length > 0) setGeneratedIdleQuips(result.idle);
     } catch {
       // CLI not available or failed — silently ignore
     }
@@ -463,33 +470,26 @@ export function MascotEyes() {
     if ((countChanged || timeExpired) && sessions.length > 0) {
       lastSessionCount.current = sessionCount;
       lastGenTime.current = now;
-      fetchQuips(mood, sessions);
+      fetchQuips(sessions);
     }
 
     // Also set up a periodic timer
     const interval = setInterval(() => {
       if (sessions.length > 0) {
         lastGenTime.current = Date.now();
-        fetchQuips(mood, sessions);
+        fetchQuips(sessions);
       }
     }, QUIP_REGEN_INTERVAL);
 
     return () => clearInterval(interval);
-  }, [sessions.length, mood, fetchQuips, sessions]);
+  }, [sessions.length, fetchQuips, sessions]);
 
   // ── Click handler ──────────────────────────────────────────────────────────
   const handleMascotClick = () => {
     if (clickCooldown.current || clickReaction) return;
 
-    // 50% chance to use a generated click quip if available
-    let key: string;
-    if (generatedClickQuips.length > 0 && Math.random() < 0.5) {
-      const gen = generatedClickQuips[Math.floor(Math.random() * generatedClickQuips.length)];
-      key = `__gen__${gen}`; // prefix to distinguish from i18n keys
-    } else {
-      const keys = CLICK_QUIP_KEYS[mood];
-      key = keys[Math.floor(Math.random() * keys.length)];
-    }
+    const keys = CLICK_QUIP_KEYS[mood];
+    const key = keys[Math.floor(Math.random() * keys.length)];
 
     setClickReaction(true);
     setClickQuipKey(key);
@@ -514,14 +514,12 @@ export function MascotEyes() {
   const baseShape = variants[eyeVariant % variants.length];
   // Override eye shape to heart during click reaction
   const shape = clickReaction ? { ...baseShape, eyeShape: "heart" as const } : baseShape;
-  // Quip text: mix i18n keys with generated quips.
-  // Generated quips are interleaved — every other rotation shows a generated one.
+  // Quip text: mix i18n keys with generated quips (busy or idle group based on mood).
+  const busyMoods: MascotMood[] = ["excited", "focused", "anxious", "attentive", "frustrated"];
+  const generatedQuips = busyMoods.includes(mood) ? generatedBusyQuips : generatedIdleQuips;
+
   const quipText = useMemo(() => {
     if (clickReaction && clickQuipKey) {
-      // Click reaction: use generated click quip if available, otherwise i18n
-      if (clickQuipKey.startsWith("__gen__")) {
-        return clickQuipKey.slice(7); // strip prefix, it's raw text
-      }
       return t(clickQuipKey);
     }
     // Normal quip rotation: alternate between i18n and generated
@@ -965,12 +963,89 @@ export function MascotEyes() {
     clickReaction ? styles.clickQuip : "",
   ].filter(Boolean).join(" ");
 
+  // Notify parent of quip changes (used by overlay to render bubble externally)
+  useEffect(() => {
+    onQuip?.(quipText || null);
+  }, [quipText, onQuip]);
+
+  // Embedded mode: just the SVG, no toggle/quip wrapper
+  if (embedded) {
+    return (
+      <div className={mascotClasses} onClick={handleMascotClick} style={{ background: "transparent" }}>
+        <svg viewBox="0 -14 200 114" className={styles.svg}>
+          <defs>
+            <linearGradient id="grad-special" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="rgba(255,255,255,0.3)" />
+              <stop offset="100%" stopColor="rgba(0,0,0,0.2)" />
+            </linearGradient>
+          </defs>
+          <rect x="0" y="-14" width="200" height="128" fill="var(--mascot-bg)" className={styles.bg} />
+          <g style={{ transform: `translateY(${bodyTranslateY}px)` }} className={styles.bodyGroup}>
+            {renderEye(EYE_LEFT_CX, false)}
+            {renderEye(EYE_RIGHT_CX, true)}
+            {renderMouth()}
+          </g>
+          {renderEmojis()}
+        </svg>
+      </div>
+    );
+  }
+
+  const overlayEnabled = useOverlayStore((s) => s.enabled);
+
+  // When overlay is active, show a compact "find assistant" placeholder instead
+  if (overlayEnabled) {
+    return (
+      <div className={styles.container}>
+        <div className={styles.overlayPlaceholder}>
+          <button
+            className={styles.findBtn}
+            onClick={() => invoke("center_overlay").catch(() => {})}
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="7" cy="7" r="5" />
+              <path d="M14 14l-3.5-3.5" />
+            </svg>
+            <span>{t("overlay.find")}</span>
+          </button>
+          <button
+            className={styles.recallBtn}
+            onClick={() => useOverlayStore.getState().setEnabled(false)}
+            title={t("overlay.recall")}
+          >
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 9v4a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h4" />
+              <path d="M9 7L2 14" />
+              <path d="M2 10v4h4" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={styles.container}>
-      <button className={styles.toggle} onClick={() => setExpanded((v) => !v)}>
-        <span className={styles.toggle_label}>{t("mascot.panel_title")}</span>
-        <span className={styles.toggle_icon}>{expanded ? "▲" : "▼"}</span>
-      </button>
+      <div className={styles.toggle}>
+        <button className={styles.toggle_btn} onClick={() => setExpanded((v) => !v)}>
+          <span className={styles.toggle_label}>{t("mascot.panel_title")}</span>
+          <span className={styles.toggle_icon}>{expanded ? "▲" : "▼"}</span>
+        </button>
+        <button
+          className={styles.popout_btn}
+          onClick={(e) => {
+            e.stopPropagation();
+            useOverlayStore.getState().setEnabled(true);
+          }}
+          title={t("overlay.popout")}
+        >
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10 2h4v4" />
+            <path d="M14 2L8 8" />
+            <path d="M12 9v4a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h4" />
+          </svg>
+        </button>
+      </div>
       {expanded && (
         <div className={mascotClasses} onClick={handleMascotClick}>
           {quipText && (
