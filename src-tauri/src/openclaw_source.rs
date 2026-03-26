@@ -245,25 +245,43 @@ fn scan_openclaw_processes() -> Vec<(u32, String)> {
 
     let mut result = Vec::new();
     let mut sys = System::new();
+
+    // Phase 1: scan all processes for cmd only (no cwd) to avoid triggering
+    // macOS TCC permission dialogs for unrelated processes whose cwd may be
+    // in protected directories (~/Documents, ~/Music, network volumes, etc.).
     sys.refresh_processes_specifics(
         ProcessesToUpdate::All,
         true,
         ProcessRefreshKind::nothing()
-            .with_cwd(UpdateKind::Always)
             .with_cmd(UpdateKind::Always),
     );
-    for (pid, process) in sys.processes() {
-        let name = process.name().to_string_lossy();
-        let cmd_str: String = process.cmd().iter()
-            .map(|s| s.to_string_lossy().to_string())
-            .collect::<Vec<_>>()
-            .join(" ");
+    let matched_pids: Vec<_> = sys
+        .processes()
+        .iter()
+        .filter(|(_, p)| {
+            let name = p.name().to_string_lossy();
+            let cmd_str: String = p.cmd().iter()
+                .map(|s| s.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+            name == "openclaw" || name == "openclaw.exe"
+                || (name.starts_with("node") && cmd_str.contains("openclaw"))
+        })
+        .map(|(pid, _)| *pid)
+        .collect();
 
-        // Match `openclaw` binary or node processes running openclaw
-        let is_openclaw = name == "openclaw" || name == "openclaw.exe"
-            || (name.starts_with("node") && cmd_str.contains("openclaw"));
+    // Phase 2: read cwd only for matched processes.
+    if !matched_pids.is_empty() {
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&matched_pids),
+            true,
+            ProcessRefreshKind::nothing()
+                .with_cwd(UpdateKind::Always),
+        );
+    }
 
-        if is_openclaw {
+    for pid in &matched_pids {
+        if let Some(process) = sys.process(*pid) {
             if let Some(cwd) = process.cwd() {
                 if let Some(path) = cwd.to_str() {
                     result.push((pid.as_u32(), path.to_string()));

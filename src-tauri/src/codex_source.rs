@@ -460,28 +460,56 @@ fn scan_codex_processes() -> Vec<CodexProcess> {
 
     let mut result = Vec::new();
     let mut sys = System::new();
+
+    // Phase 1: scan all processes for cmd only (no cwd) to avoid triggering
+    // macOS TCC permission dialogs for unrelated processes whose cwd may be
+    // in protected directories (~/Documents, ~/Music, network volumes, etc.).
     sys.refresh_processes_specifics(
         ProcessesToUpdate::All,
         true,
         ProcessRefreshKind::nothing()
-            .with_cwd(UpdateKind::Always)
             .with_cmd(UpdateKind::Always),
     );
-    for (pid, process) in sys.processes() {
-        let name = process.name().to_string_lossy();
-        let cmd_parts: Vec<String> = process
-            .cmd()
-            .iter()
-            .map(|s| s.to_string_lossy().to_string())
-            .collect();
-        let cmd_str = cmd_parts.join(" ");
 
-        let is_codex = name == "codex"
-            || name == "codex.exe"
-            || name == "codex-rs"
-            || (name.starts_with("node") && cmd_str.contains("codex"));
+    // Collect matched PIDs and their cmd args before phase 2.
+    let matched: Vec<_> = sys
+        .processes()
+        .iter()
+        .filter_map(|(pid, process)| {
+            let name = process.name().to_string_lossy();
+            let cmd_parts: Vec<String> = process
+                .cmd()
+                .iter()
+                .map(|s| s.to_string_lossy().to_string())
+                .collect();
+            let cmd_str = cmd_parts.join(" ");
 
-        if is_codex {
+            let is_codex = name == "codex"
+                || name == "codex.exe"
+                || name == "codex-rs"
+                || (name.starts_with("node") && cmd_str.contains("codex"));
+
+            if is_codex {
+                Some((*pid, cmd_parts))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Phase 2: read cwd only for matched processes.
+    let matched_pids: Vec<_> = matched.iter().map(|(pid, _)| *pid).collect();
+    if !matched_pids.is_empty() {
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&matched_pids),
+            true,
+            ProcessRefreshKind::nothing()
+                .with_cwd(UpdateKind::Always),
+        );
+    }
+
+    for (pid, cmd_parts) in &matched {
+        if let Some(process) = sys.process(*pid) {
             let cwd = process
                 .cwd()
                 .and_then(|p| p.to_str())
@@ -491,8 +519,7 @@ fn scan_codex_processes() -> Vec<CodexProcess> {
                 continue;
             }
 
-            // Extract thread ID from command-line args: --thread <id> or --resume <id>
-            let thread_id = extract_thread_id_from_args(&cmd_parts);
+            let thread_id = extract_thread_id_from_args(cmd_parts);
 
             result.push(CodexProcess {
                 pid: pid.as_u32(),

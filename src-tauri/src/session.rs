@@ -227,16 +227,38 @@ pub fn scan_cli_processes() -> Vec<CliProcess> {
 
     let mut result = Vec::new();
     let mut sys = System::new();
+
+    // Phase 1: scan all processes for cmd only (no cwd) to avoid triggering
+    // macOS TCC permission dialogs for unrelated processes whose cwd may be
+    // in protected directories (~/Documents, ~/Music, network volumes, etc.).
     sys.refresh_processes_specifics(
         ProcessesToUpdate::All,
         true,
         ProcessRefreshKind::nothing()
-            .with_cwd(UpdateKind::Always)
             .with_cmd(UpdateKind::Always),
     );
-    for (pid, process) in sys.processes() {
-        let name = process.name().to_string_lossy();
-        if name == "claude" || name == "claude.exe" {
+    let matched_pids: Vec<_> = sys
+        .processes()
+        .iter()
+        .filter(|(_, p)| {
+            let name = p.name().to_string_lossy();
+            name == "claude" || name == "claude.exe"
+        })
+        .map(|(pid, _)| *pid)
+        .collect();
+
+    // Phase 2: read cwd only for matched processes.
+    if !matched_pids.is_empty() {
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&matched_pids),
+            true,
+            ProcessRefreshKind::nothing()
+                .with_cwd(UpdateKind::Always),
+        );
+    }
+
+    for pid in &matched_pids {
+        if let Some(process) = sys.process(*pid) {
             if let Some(cwd) = process.cwd() {
                 if let Some(path) = cwd.to_str() {
                     let resume_session_id = extract_resume_id(process.cmd());
