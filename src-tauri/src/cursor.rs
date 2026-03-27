@@ -530,7 +530,9 @@ pub fn scan_cursor_sessions(_cursor_dir: &Path) -> Vec<SessionInfo> {
         });
     }
 
-    // Promote main sessions to Delegating if they have active subagents
+    // Promote main sessions to Delegating if they have actively-working subagents.
+    // A subagent that is WaitingInput has finished its turn and should not cause the parent
+    // to show as Delegating — otherwise the parent's own WaitingInput status gets hidden.
     let active_parent_ids: HashSet<String> = sessions
         .iter()
         .filter(|s| {
@@ -542,7 +544,6 @@ pub fn scan_cursor_sessions(_cursor_dir: &Path) -> Vec<SessionInfo> {
                         | SessionStatus::Streaming
                         | SessionStatus::Delegating
                         | SessionStatus::Processing
-                        | SessionStatus::WaitingInput
                 )
         })
         .filter_map(|s| s.parent_session_id.clone())

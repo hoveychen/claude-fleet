@@ -1117,7 +1117,9 @@ pub fn scan_claude_sessions(claude_dir: &Path, scan_cache: &ScanCache) -> Vec<Se
         }
     }
 
-    // Promote main sessions to Delegating if they have at least one active subagent.
+    // Promote main sessions to Delegating if they have at least one actively-working subagent.
+    // A subagent that is WaitingInput has finished its turn and should not cause the parent
+    // to show as Delegating — otherwise the parent's own WaitingInput status gets hidden.
     let active_parent_ids: std::collections::HashSet<String> = sessions
         .iter()
         .filter(|s| {
@@ -1129,7 +1131,6 @@ pub fn scan_claude_sessions(claude_dir: &Path, scan_cache: &ScanCache) -> Vec<Se
                         | SessionStatus::Streaming
                         | SessionStatus::Delegating
                         | SessionStatus::Processing
-                        | SessionStatus::WaitingInput
                 )
         })
         .filter_map(|s| s.parent_session_id.clone())
