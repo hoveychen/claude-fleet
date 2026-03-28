@@ -138,7 +138,11 @@ export async function speakText(text: string, voice?: string) {
     });
     if (result.audio_base64) {
       const audio = new Audio(`data:audio/mpeg;base64,${result.audio_base64}`);
-      await audio.play();
+      await new Promise<void>((resolve, reject) => {
+        audio.onended = () => resolve();
+        audio.onerror = () => reject(new Error("audio playback error"));
+        audio.play().catch(reject);
+      });
     }
   } catch (err) {
     console.warn("[audio] speakText (msedge-tts) failed, trying macOS say fallback:", err);
@@ -151,8 +155,23 @@ export async function speakText(text: string, voice?: string) {
   }
 }
 
+// ── Alert queue ─────────────────────────────────────────────────────────────
+
+let alertQueue: string[] = [];
+let alertPlaying = false;
+
+async function processAlertQueue() {
+  if (alertPlaying) return;
+  alertPlaying = true;
+  while (alertQueue.length > 0) {
+    const summary = alertQueue.shift()!;
+    await playAlertSoundImpl(summary);
+  }
+  alertPlaying = false;
+}
+
 /** Play alert: chime (optional) → speech (optional), based on current settings. */
-export async function playAlertSound(summary: string) {
+export function playAlertSound(summary: string) {
   if (getItem("overlay-muted") === "true") {
     console.debug("[audio] alert skipped: overlay muted");
     return;
@@ -162,13 +181,18 @@ export async function playAlertSound(summary: string) {
     console.debug("[audio] alert skipped: tts mode off");
     return;
   }
+  alertQueue.push(summary);
+  processAlertQueue();
+}
 
+async function playAlertSoundImpl(summary: string) {
+  const mode = (getItem("tts-mode") as TtsMode) || "off";
   const chime = (getItem("chime-sound") as ChimePreset) || "ding_dong";
   console.debug("[audio] playing chime:", chime, "mode:", mode);
   await playChime(chime);
 
   if (mode === "chime_and_speech") {
     const voiceURI = getItem("tts-voice") || undefined;
-    speakText(summary, voiceURI);
+    await speakText(summary, voiceURI);
   }
 }

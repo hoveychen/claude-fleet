@@ -746,7 +746,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "claude-fleet"
-version = "26.3.28-dev.1774689961"
+version = "26.3.28-dev.1774690929"
 dependencies = [
  "base64 0.22.1",
  "chrono",
