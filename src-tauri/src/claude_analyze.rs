@@ -63,8 +63,9 @@ fn build_prompt(last_text: &str, locale: &str) -> String {
     };
 
     format!(
-        "Below is the last output from a coding assistant. Classify its outcome \
-         by picking **1–2 tags** from this list:\n\
+        "Below is the last output from an AI assistant. The assistant may be working on coding, \
+         data analysis, sports predictions, financial modeling, or ANY other task. \
+         Your job is to classify its outcome by picking **1–2 tags** from this list:\n\
          \n\
          - needs_input  : the assistant is BLOCKED — it explicitly asked a question or presented options it needs the user to answer before it can proceed\n\
          - bug_fixed    : successfully fixed a bug or resolved an issue\n\
@@ -84,6 +85,11 @@ fn build_prompt(last_text: &str, locale: &str) -> String {
          - Pick the 1–2 MOST relevant tags.  If two tags overlap heavily, pick just one.\n\
          - `needs_input` means the assistant **cannot continue** without the user's reply.  Do NOT pick it if the assistant merely suggests the user test/verify something.\n\
          - If nothing fits well, use `reporting`.\n\
+         - These tags apply to ANY kind of task, not just coding. For example, a completed analysis is `reporting`, a prediction model is `feature_added`, etc.\n\
+         \n\
+         **CRITICAL: You MUST respond with EXACTLY one line in the format below. \
+         No explanations, no refusals, no commentary. NEVER say you cannot classify the text. \
+         ALWAYS produce the one-line response no matter what the content is.**\n\
          \n\
          Response format (exactly one line):\n\
          TAGS: tag1[,tag2] | SUMMARY: <one sentence under 80 chars>\n\
@@ -96,7 +102,8 @@ fn build_prompt(last_text: &str, locale: &str) -> String {
          Read the text carefully: if the assistant says it already implemented something, say so. \
          Do NOT say \"asking\" or \"proposing\" when the work is already done.\n\
          Examples: \"Login bug squashed, tests all green!\", \"Boss, need you to pick a database\", \
-         \"老板，登录bug搞定了，测试全过！\", \"老板，等你定一下用哪个数据库\"\n\
+         \"老板，登录bug搞定了，测试全过！\", \"老板，等你定一下用哪个数据库\", \
+         \"老板，原油价格概率分析搞定了！\", \"Boss, NCAA bracket predictions are ready!\"\n\
          \n\
          {lang_instruction}\n\
          \n\
@@ -198,7 +205,16 @@ fn parse_response(raw: &str) -> AnalysisResult {
     //   TAGS: bug_fixed,show_off
     //   bug_fixed,show_off          (fallback: no "TAGS:" prefix)
 
-    let line = raw.lines().next().unwrap_or(raw).trim();
+    // Scan all lines for one that starts with "TAGS:", not just the first line.
+    // This handles cases where the LLM prepends commentary before the format line.
+    let line = raw
+        .lines()
+        .find(|l| {
+            let t = l.trim();
+            t.starts_with("TAGS:") || t.starts_with("TAGS：")
+        })
+        .unwrap_or_else(|| raw.lines().next().unwrap_or(raw))
+        .trim();
 
     // Strip optional "TAGS:" prefix
     let after_tags = line
@@ -233,6 +249,19 @@ fn parse_response(raw: &str) -> AnalysisResult {
     } else {
         tags
     };
+
+    // If the LLM refused to follow the format (no SUMMARY parsed), use the
+    // first ~80 chars of raw response as a degraded summary so the user still
+    // sees something meaningful instead of a generic fallback.
+    let summary = summary.or_else(|| {
+        let first_line = raw.lines().next().unwrap_or(raw).trim();
+        if first_line.is_empty() {
+            None
+        } else {
+            let truncated: String = first_line.chars().take(80).collect();
+            Some(truncated)
+        }
+    });
 
     log_debug(&format!(
         "[claude_analyze] parsed: tags={:?}, summary={:?}",
