@@ -363,19 +363,6 @@ fn emit_progress(app: &AppHandle, step: &str, done: bool, error: Option<&str>) {
     );
 }
 
-/// Like `emit_progress` but replaces the last progress entry in the frontend (for live updates).
-fn emit_progress_update(app: &AppHandle, step: &str) {
-    let _ = app.emit(
-        "remote-connect-progress",
-        ConnectProgress {
-            step: step.to_string(),
-            done: false,
-            error: None,
-            update_last: true,
-        },
-    );
-}
-
 // ── Saved connections persistence ────────────────────────────────────────────
 
 fn connections_path() -> Option<PathBuf> {
@@ -510,60 +497,6 @@ pub fn list_ssh_profiles() -> Vec<String> {
 
 /// Run a download command via SSH, streaming progress lines `"<current_bytes> <total_bytes>"`.
 /// The remote script must print `DONE` on success or `FAILED` on failure as its last line.
-fn ssh_download_with_progress<F>(
-    conn: &RemoteConnection,
-    remote_cmd: &str,
-    mut on_progress: F,
-) -> Result<(), String>
-where
-    F: FnMut(u64, u64),
-{
-    use std::io::BufRead;
-
-    let mut args = base_ssh_args(conn);
-    args.push(remote_cmd.to_string());
-
-    let mut child = std::process::Command::new("ssh")
-        .args(&args)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| format!("ssh spawn failed: {e}"))?;
-
-    let stdout = child.stdout.take().ok_or("no stdout from ssh")?;
-    let reader = std::io::BufReader::new(stdout);
-
-    let mut success = false;
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => break,
-        };
-        let line = line.trim();
-        if line == "DONE" {
-            success = true;
-            break;
-        } else if line == "FAILED" {
-            break;
-        } else {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 2 {
-                let cur: u64 = parts[0].parse().unwrap_or(0);
-                let total: u64 = parts[1].parse().unwrap_or(0);
-                on_progress(cur, total);
-            }
-        }
-    }
-
-    child.wait().ok();
-
-    if success {
-        Ok(())
-    } else {
-        Err("Remote download failed".to_string())
-    }
-}
-
 /// Run an SSH command on the remote host and return (stdout, stderr, success).
 fn ssh_exec(conn: &RemoteConnection, remote_cmd: &str) -> Result<String, String> {
     let mut args = base_ssh_args(conn);
@@ -683,7 +616,7 @@ fn connect_remote_impl(
         .trim()
         .to_string();
 
-    // Map to GitHub release artifact suffix, e.g. "linux-x64"
+    // Map to bundled binary suffix, e.g. "linux-x64"
     let release_suffix: Option<&str> = if remote_uname.contains("Linux") {
         if remote_uname.contains("x86_64") {
             Some("linux-x64")
@@ -732,8 +665,6 @@ fn connect_remote_impl(
 
         // Priority 1: local native CLI (same OS+arch — e.g. macOS→macOS, Linux→Linux)
         // Priority 2: bundled cross-platform CLI (e.g. fleet-linux-x64 inside the app)
-        // Priority 3: download from latest GitHub release on the remote (needs internet)
-        // Priority 4: error
         let upload_bin: Option<PathBuf> = if local_matches_remote(&remote_uname) {
             find_local_fleet_binary()
         } else {
@@ -775,54 +706,10 @@ fn connect_remote_impl(
             })?;
 
             emit_progress(app, "Fleet binary ready.", false, None);
-        } else if let Some(suffix) = release_suffix {
-            // Priority 3: download directly on the remote
-            let dl_url = format!(
-                "https://github.com/hoveychen/claude-fleet/releases/latest/download/fleet-{suffix}"
-            );
-            emit_progress(
-                app,
-                &format!("Downloading fleet binary for {remote_uname}…"),
-                false,
-                None,
-            );
-            // Bash script: fetches Content-Length first, then downloads in background
-            // while printing "<current_bytes> <total_bytes>" lines for progress.
-            // Prints DONE or FAILED as the final line.
-            let bin = remote_fleet_path();
-            let dl_cmd = format!(
-                r#"TOTAL=$(curl -sI "{url}" 2>/dev/null | grep -i 'content-length' | tail -1 | tr -d '\r' | awk '{{print $2}}'); [ -z "$TOTAL" ] && TOTAL=0; curl -fL "{url}" -o {bin}.tmp 2>/dev/null & CURL_PID=$!; while kill -0 $CURL_PID 2>/dev/null; do CUR=$(stat -c '%s' {bin}.tmp 2>/dev/null || echo 0); echo "$CUR $TOTAL"; sleep 0.5; done; wait $CURL_PID; if [ $? -eq 0 ]; then mv {bin}.tmp {bin} && chmod +x {bin} && echo DONE; else rm -f {bin}.tmp; echo FAILED; fi"#,
-                url = dl_url,
-                bin = bin,
-            );
-            let app_ref = app;
-            let result = ssh_download_with_progress(&conn, &dl_cmd, |cur, total| {
-                let step = if total > 0 {
-                    let pct = (cur as f64 / total as f64 * 100.0) as u32;
-                    let cur_mb = cur as f64 / 1_048_576.0;
-                    let total_mb = total as f64 / 1_048_576.0;
-                    format!("Downloading fleet binary… {pct}% ({cur_mb:.1}/{total_mb:.1} MB)")
-                } else {
-                    let cur_mb = cur as f64 / 1_048_576.0;
-                    format!("Downloading fleet binary… {cur_mb:.1} MB")
-                };
-                emit_progress_update(app_ref, &step);
-            });
-            if result.is_ok() {
-                emit_progress_update(app, "Downloading fleet binary… complete.");
-                // Binary is already in place — skip SCP, go straight to probe startup
-                return connect_remote_start_probe(conn, app, remote_uname);
-            }
-            let err = format!(
-                "No bundled binary for {remote_uname} and GitHub download failed.\n\
-                 Run build-local.sh to include the bundled Linux probe binary."
-            );
-            emit_progress(app, &err, false, Some(&err));
-            return Err(err);
         } else {
             let err = format!(
-                "Unsupported remote platform: {remote_uname}.\n\
-                 No matching binary available (local, bundled, or downloadable)."
+                "No matching fleet binary available for {remote_uname}.\n\
+                 Run build-local.sh to include the bundled probe binary."
             );
             emit_progress(app, &err, false, Some(&err));
             return Err(err);
