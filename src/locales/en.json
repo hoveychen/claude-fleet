@@ -122,7 +122,8 @@
     "time": "Time",
     "tags": "Tags",
     "full_command": "Full Command",
-    "go_to_session": "Go to Session"
+    "go_to_session": "Go to Session",
+    "mark_read": "Mark as Read"
   },
   "memory": {
     "panel_title": "Memory",

@@ -176,3 +176,13 @@ export interface AuditSummary {
   events: AuditEvent[];
   totalSessionsScanned: number;
 }
+
+export interface AuditAlert {
+  key: string;
+  sessionId: string;
+  workspaceName: string;
+  commandSummary: string;
+  riskTags: string[];
+  detectedAtMs: number;
+  jsonlPath: string;
+}

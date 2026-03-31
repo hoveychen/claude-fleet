@@ -5,6 +5,7 @@ interface SessionToolbarProps {
   filter: string;
   onFilterChange: (value: string) => void;
   activeCount: number;
+  totalCount: number;
   showAll: boolean;
   onToggleShowAll: () => void;
   /** Number of extra sessions matched by full-text search (beyond client-side filter). */
@@ -17,6 +18,7 @@ export function SessionToolbar({
   filter,
   onFilterChange,
   activeCount,
+  totalCount,
   showAll,
   onToggleShowAll,
   ftsMatchCount,
@@ -36,6 +38,9 @@ export function SessionToolbar({
         />
         {searching && <span className={styles.spinner} />}
       </div>
+      <span className={styles.total_badge} title={`${activeCount} active`}>
+        {totalCount}
+      </span>
       <span className={styles.count}>
         {activeCount} {t("active")}
         {ftsMatchCount != null && ftsMatchCount > 0 && (

@@ -122,7 +122,8 @@
     "time": "时间",
     "tags": "标签",
     "full_command": "完整命令",
-    "go_to_session": "跳转到会话"
+    "go_to_session": "跳转到会话",
+    "mark_read": "标记已读"
   },
   "memory": {
     "panel_title": "Memory",

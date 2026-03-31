@@ -46,6 +46,16 @@
   to { transform: rotate(360deg); }
 }
 
+.total_badge {
+  font-size: 11px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-dim);
+  padding: 2px 7px;
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
 .count {
   font-size: 11px;
   color: var(--color-text-dim);

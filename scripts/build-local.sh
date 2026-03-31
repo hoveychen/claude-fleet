@@ -35,7 +35,7 @@ echo "==> Target: $TARGET  (mode: $MODE)"
 
 # 1. Build fleet CLI (native)
 echo "==> Building fleet CLI (native)..."
-cargo build $CARGO_FLAG --bin fleet-cli --manifest-path "$CARGO_TOML"
+cargo build $CARGO_FLAG --bin fleet-cli --features tts --manifest-path "$CARGO_TOML"
 
 # 2. Copy compiled binary into binaries/ so Tauri bundles the real binary
 mkdir -p src-tauri/binaries
@@ -47,7 +47,7 @@ echo "==> Copied fleet CLI → $DST"
 
 # 3. Build Tauri app (frontend + Rust main binary)
 echo "==> Building Tauri app..."
-npm run tauri build
+npm run tauri:build
 
 echo ""
 echo "Done! Version: $DEV_VERSION"

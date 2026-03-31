@@ -17,8 +17,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSessionsStore } from "../../store";
-import type { SessionInfo } from "../../types";
 import type { MascotMood } from "../MascotEyes";
+import { useMood } from "../useMood";
 import styles from "./OctopusMascot.module.css";
 
 // ── Math helpers ─────────────────────────────────────────────────────────────
@@ -172,43 +172,7 @@ const TENTACLES: TentacleDef[] = [
   },
 ];
 
-// ── Mood system ───────────────────────────────────────────────────────────────
-// (mirrors MascotEyes mood derivation)
-
-function promoteSessions(sessions: SessionInfo[]): SessionInfo[] {
-  const activeSubagentParentIds = new Set(
-    sessions
-      .filter(
-        (s) =>
-          s.isSubagent &&
-          s.parentSessionId &&
-          ["thinking", "executing", "streaming", "processing", "waitingInput", "active"].includes(s.status),
-      )
-      .map((s) => s.parentSessionId!),
-  );
-  return sessions.map((s) =>
-    !s.isSubagent &&
-    ["idle", "active", "waitingInput", "processing"].includes(s.status) &&
-    activeSubagentParentIds.has(s.id)
-      ? { ...s, status: "delegating" as const }
-      : s,
-  );
-}
-
-function deriveMood(sessions: SessionInfo[]): MascotMood {
-  if (sessions.length === 0) return "lonely";
-  const promoted = promoteSessions(sessions);
-  const busyStatuses = ["thinking", "executing", "streaming", "processing", "active", "delegating"];
-  const busy    = promoted.filter((s) => busyStatuses.includes(s.status));
-  const waiting = promoted.filter((s) => s.status === "waitingInput");
-  const idle    = promoted.filter((s) => s.status === "idle");
-  const totalSpeed = promoted.reduce((sum, s) => sum + s.tokenSpeed, 0);
-  if (busy.length === 0 && waiting.length === 0) return idle.length > 3 ? "sleepy" : "bored";
-  if (totalSpeed > 80 || busy.length >= 4) return "excited";
-  if (busy.length >= 1) return "focused";
-  if (waiting.length > 0 && busy.length === 0) return "anxious";
-  return "satisfied";
-}
+// Mood derivation is now in useMood.ts
 
 // ── Wave animation parameters per mood ───────────────────────────────────────
 
@@ -440,8 +404,7 @@ export interface OctopusMascotProps {
 export function OctopusMascot({ className, showQuip = true, forceMood }: OctopusMascotProps) {
   const { t } = useTranslation();
   const { sessions } = useSessionsStore();
-  const derivedMood = useMemo(() => deriveMood(sessions), [sessions]);
-  const mood = forceMood ?? derivedMood;
+  const mood = useMood(sessions, forceMood);
 
   // ── Per-frame wave phase (drives tentacle animation) ──────────────────────
   const [wavePhase, setWavePhase] = useState(0);
@@ -645,11 +608,15 @@ export function OctopusMascot({ className, showQuip = true, forceMood }: Octopus
       const effectiveRy = isRight && rightRy ? rightRy : ry;
       const baseLidTop  = isRight && rightLidTop !== undefined ? rightLidTop : lidTop;
       const blinkLid    = isBlinking ? 0.95 : Math.max(0, Math.min(baseLidTop, 0.95));
+      // Clamp lidBot for winking eye so top + bottom lids don't exceed 0.95
+      const effectiveLidBot = isRight && rightLidTop !== undefined
+        ? Math.min(lidBot, Math.max(0, 0.95 - blinkLid))
+        : lidBot;
 
       const eyeTop  = EYE_CY - effectiveRy;
       const eyeBot  = EYE_CY + effectiveRy;
       const lidTopY = eyeTop + effectiveRy * 2 * blinkLid;
-      const lidBotY = eyeBot - effectiveRy * 2 * lidBot;
+      const lidBotY = eyeBot - effectiveRy * 2 * effectiveLidBot;
 
       const px = cx + effectivePupilOffset.x;
       const py = EYE_CY + effectivePupilOffset.y;
@@ -683,7 +650,7 @@ export function OctopusMascot({ className, showQuip = true, forceMood }: Octopus
           <rect x={cx - rx - 1} y={eyeTop - 2} width={rx * 2 + 2}
             height={Math.max(0, lidTopY - eyeTop + 2)} fill={body.main} className={styles.eyelid} />
           {/* Bottom eyelid */}
-          {lidBot > 0 && (
+          {effectiveLidBot > 0 && (
             <rect x={cx - rx - 1} y={lidBotY} width={rx * 2 + 2}
               height={Math.max(0, eyeBot - lidBotY + 2)} fill={body.main} className={styles.eyelid} />
           )}

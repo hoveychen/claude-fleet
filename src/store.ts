@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen, UnlistenFn } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import type { RemoteConnection } from "./components/ConnectionDialog";
-import type { RawMessage, SessionInfo, WaitingAlert } from "./types";
+import type { AuditAlert, RawMessage, SessionInfo, WaitingAlert } from "./types";
 import { getItem, setItem } from "./storage";
 
 // ── Connection store ──────────────────────────────────────────────────────────
@@ -173,6 +173,98 @@ export const useWaitingAlertsStore = create<WaitingAlertsState>((set) => ({
     const alerts = await invoke<WaitingAlert[]>("get_waiting_alerts");
     set({ alerts });
   },
+}));
+
+// ── Audit alerts store (critical event notifications) ───────────────────────
+
+interface AuditAlertsState {
+  alerts: AuditAlert[];
+  dismissedKeys: Set<string>;
+  addAlert: (alert: AuditAlert) => void;
+  dismiss: (key: string) => void;
+}
+
+export const useAuditAlertsStore = create<AuditAlertsState>((set) => ({
+  alerts: [],
+  dismissedKeys: new Set(),
+  addAlert: (alert) =>
+    set((state) => {
+      if (state.alerts.some((a) => a.key === alert.key)) return state;
+      return { alerts: [...state.alerts, alert] };
+    }),
+  dismiss: (key) =>
+    set((state) => {
+      const next = new Set(state.dismissedKeys);
+      next.add(key);
+      return { dismissedKeys: next };
+    }),
+}));
+
+// ── Audit read-state store ──────────────────────────────────────────────────
+
+function auditEventKey(e: { sessionId: string; timestamp: string; toolName: string }): string {
+  return `${e.sessionId}|${e.timestamp}|${e.toolName}`;
+}
+
+function loadReadKeys(): Set<string> {
+  try {
+    const raw = localStorage.getItem("audit-read-keys");
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveReadKeys(keys: Set<string>) {
+  localStorage.setItem("audit-read-keys", JSON.stringify([...keys]));
+}
+
+interface AuditState {
+  readKeys: Set<string>;
+  /** Count of unread critical events (updated when audit data is fetched) */
+  unreadCriticalCount: number;
+  /** All critical events from the last fetch */
+  criticalEvents: Array<{ sessionId: string; timestamp: string; toolName: string }>;
+  markAsRead: (key: string) => void;
+  markAllCriticalAsRead: () => void;
+  isRead: (e: { sessionId: string; timestamp: string; toolName: string }) => boolean;
+  getEventKey: (e: { sessionId: string; timestamp: string; toolName: string }) => string;
+  /** Called after fetching audit data to update critical event list & unread count */
+  setCriticalEvents: (events: Array<{ sessionId: string; timestamp: string; toolName: string }>) => void;
+}
+
+export const useAuditStore = create<AuditState>((set, get) => ({
+  readKeys: loadReadKeys(),
+  unreadCriticalCount: 0,
+  criticalEvents: [],
+  markAsRead: (key) =>
+    set((state) => {
+      const next = new Set(state.readKeys);
+      next.add(key);
+      saveReadKeys(next);
+      const unreadCriticalCount = state.criticalEvents.filter(
+        (e) => !next.has(auditEventKey(e))
+      ).length;
+      return { readKeys: next, unreadCriticalCount };
+    }),
+  markAllCriticalAsRead: () =>
+    set((state) => {
+      const next = new Set(state.readKeys);
+      for (const e of state.criticalEvents) {
+        next.add(auditEventKey(e));
+      }
+      saveReadKeys(next);
+      return { readKeys: next, unreadCriticalCount: 0 };
+    }),
+  isRead: (e) => get().readKeys.has(auditEventKey(e)),
+  getEventKey: (e) => auditEventKey(e),
+  setCriticalEvents: (events) =>
+    set((state) => {
+      const unreadCriticalCount = events.filter(
+        (e) => !state.readKeys.has(auditEventKey(e))
+      ).length;
+      return { criticalEvents: events, unreadCriticalCount };
+    }),
 }));
 
 // ── Overlay store ───────────────────────────────────────────────────────────

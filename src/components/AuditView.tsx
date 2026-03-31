@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useDetailStore, useSessionsStore, useUIStore } from "../store";
+import { useAuditStore, useDetailStore, useSessionsStore, useUIStore } from "../store";
 import type { AuditEvent, AuditRiskLevel, AuditSummary } from "../types";
 import styles from "./AuditView.module.css";
 
@@ -30,18 +30,20 @@ export function AuditView() {
   const { sessions } = useSessionsStore();
   const { open } = useDetailStore();
   const { setViewMode } = useUIStore();
+  const { isRead, markAsRead, getEventKey, setCriticalEvents } = useAuditStore();
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const data = await invoke<AuditSummary>("get_audit_events");
       setSummary(data);
+      setCriticalEvents(data.events.filter((e) => e.riskLevel === "critical"));
     } catch {
       setSummary({ events: [], totalSessionsScanned: 0 });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setCriticalEvents]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -132,28 +134,43 @@ export function AuditView() {
                   {events.length}
                 </span>
               </div>
-              {events.map((event, i) => (
-                <div
-                  key={`${sessionId}-${i}`}
-                  className={`${styles.event_row} ${selectedEvent === event ? styles.event_row_selected : ""}`}
-                  onClick={() => setSelectedEvent(event)}
-                >
-                  <span
-                    className={styles.risk_badge}
-                    style={{ background: `${RISK_COLORS[event.riskLevel]}20`, color: RISK_COLORS[event.riskLevel] }}
+              {events.map((event, i) => {
+                const read = event.riskLevel === "critical" && isRead(event);
+                return (
+                  <div
+                    key={`${sessionId}-${i}`}
+                    className={`${styles.event_row} ${selectedEvent === event ? styles.event_row_selected : ""} ${read ? styles.event_row_read : ""}`}
+                    onClick={() => setSelectedEvent(event)}
                   >
-                    {RISK_LABELS[event.riskLevel]}
-                  </span>
-                  <span className={styles.event_command}>
-                    {event.commandSummary}
-                  </span>
-                  {event.timestamp && (
-                    <span className={styles.event_time}>
-                      {formatTime(event.timestamp)}
+                    <span
+                      className={styles.risk_badge}
+                      style={{ background: `${RISK_COLORS[event.riskLevel]}20`, color: RISK_COLORS[event.riskLevel] }}
+                    >
+                      {RISK_LABELS[event.riskLevel]}
                     </span>
-                  )}
-                </div>
-              ))}
+                    <span className={styles.event_command}>
+                      {event.commandSummary}
+                    </span>
+                    {event.riskLevel === "critical" && !read && (
+                      <button
+                        className={styles.read_btn}
+                        title={t("audit.mark_read")}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          markAsRead(getEventKey(event));
+                        }}
+                      >
+                        ✓
+                      </button>
+                    )}
+                    {event.timestamp && (
+                      <span className={styles.event_time}>
+                        {formatTime(event.timestamp)}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ))}
         </div>
@@ -199,12 +216,22 @@ export function AuditView() {
                 <pre className={styles.command_pre}>{selectedEvent.fullCommand}</pre>
               </div>
 
-              <button
-                className={styles.goto_btn}
-                onClick={() => navigateToSession(selectedEvent.jsonlPath)}
-              >
-                {t("audit.go_to_session")}
-              </button>
+              <div className={styles.detail_actions}>
+                {selectedEvent.riskLevel === "critical" && !isRead(selectedEvent) && (
+                  <button
+                    className={styles.read_detail_btn}
+                    onClick={() => markAsRead(getEventKey(selectedEvent))}
+                  >
+                    ✓ {t("audit.mark_read")}
+                  </button>
+                )}
+                <button
+                  className={styles.goto_btn}
+                  onClick={() => navigateToSession(selectedEvent.jsonlPath)}
+                >
+                  {t("audit.go_to_session")}
+                </button>
+              </div>
             </div>
           </div>
         )}

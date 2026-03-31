@@ -192,6 +192,28 @@
   flex-shrink: 0;
 }
 
+.event_row_read {
+  opacity: 0.5;
+}
+
+.read_btn {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  color: var(--color-text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+  transition: background 0.1s, color 0.1s;
+}
+
+.read_btn:hover {
+  background: #4ade8030;
+  color: #4ade80;
+  border-color: #4ade80;
+}
+
 /* ── Detail panel (right) ────────────────────────────────────────────────── */
 
 .detail_panel {
@@ -306,10 +328,15 @@
   margin: 0;
 }
 
-/* ── Go to session button ────────────────────────────────────────────────── */
+/* ── Action buttons ─────────────────────────────────────────────────────── */
+
+.detail_actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
 
 .goto_btn {
-  align-self: flex-start;
   background: var(--color-accent);
   color: #fff;
   border: none;
@@ -318,9 +345,24 @@
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
-  margin-top: 4px;
 }
 
 .goto_btn:hover {
   opacity: 0.9;
+}
+
+.read_detail_btn {
+  background: none;
+  border: 1px solid #4ade80;
+  border-radius: 5px;
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #4ade80;
+  transition: background 0.1s;
+}
+
+.read_detail_btn:hover {
+  background: #4ade8020;
 }

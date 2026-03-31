@@ -43,6 +43,28 @@ pub struct AuditSummary {
     pub total_sessions_scanned: usize,
 }
 
+impl AuditEvent {
+    /// A stable key for deduplication (notification tracking, read state, etc.).
+    pub fn dedup_key(&self) -> String {
+        format!("{}|{}|{}", self.session_id, self.timestamp, self.tool_name)
+    }
+}
+
+/// Notification payload emitted to the frontend when a new critical audit event
+/// is detected.  Mirrors the shape of `WaitingAlert` but carries audit-specific
+/// fields.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditAlert {
+    pub key: String,
+    pub session_id: String,
+    pub workspace_name: String,
+    pub command_summary: String,
+    pub risk_tags: Vec<String>,
+    pub detected_at_ms: u64,
+    pub jsonl_path: String,
+}
+
 // ── Side-effect patterns (blacklist) ────────────────────────────────────────
 //
 // Only Bash commands matching one of these patterns will appear in the audit.

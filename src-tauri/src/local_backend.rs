@@ -40,6 +40,10 @@ pub struct LocalBackend {
     /// Audit cache: maps session ID → (last-scanned byte offset, cached events).
     /// Cleared when a session disappears from the active list.
     audit_cache: Arc<Mutex<HashMap<String, (u64, Vec<crate::audit::AuditEvent>)>>>,
+    /// Keys of critical audit events for which OS notifications have already been
+    /// sent.  Prevents duplicate notifications across rescans.
+    #[allow(dead_code)]
+    notified_audit_keys: Arc<Mutex<HashSet<String>>>,
     /// Full-text search index — used for read-only queries from the main thread.
     search_index: Arc<Mutex<SearchIndex>>,
     /// Channel to send indexing requests to the dedicated indexer thread.
@@ -66,6 +70,8 @@ impl LocalBackend {
             Arc::new(Mutex::new(HashMap::new()));
         let audit_cache: Arc<Mutex<HashMap<String, (u64, Vec<crate::audit::AuditEvent>)>>> =
             Arc::new(Mutex::new(HashMap::new()));
+        let notified_audit_keys: Arc<Mutex<HashSet<String>>> =
+            Arc::new(Mutex::new(HashSet::new()));
 
         // Open (or create) the full-text search index.
         let search_index = Arc::new(Mutex::new(
@@ -164,6 +170,8 @@ impl LocalBackend {
         let watch2 = watch.clone();
         let analyzing2 = analyzing.clone();
         let idx_tx2 = index_tx.clone();
+        let ac2 = audit_cache.clone();
+        let nak2 = notified_audit_keys.clone();
 
         // Filesystem watcher thread — batches events so we rescan at most once
         // every 2 seconds, while still tailing the viewed session immediately.
@@ -248,6 +256,9 @@ impl LocalBackend {
                         &app2,
                         &locale2,
                     );
+                    detect_audit_critical_notifications(
+                        &sess2, &sources2, &ac2, &nak2, &app2,
+                    );
                     // Send to indexer thread (non-blocking).
                     let _ = idx_tx2.send(sessions_to_index_request(&sess2.lock().unwrap()));
                     last_rescan = Instant::now();
@@ -275,6 +286,8 @@ impl LocalBackend {
             let locale3 = locale.clone();
             let analyzing3 = analyzing.clone();
             let idx_tx3 = index_tx.clone();
+            let ac3 = audit_cache.clone();
+            let nak3 = notified_audit_keys.clone();
 
             std::thread::spawn(move || {
                 let mut prev_statuses: HashMap<String, SessionStatus> = HashMap::new();
@@ -302,6 +315,9 @@ impl LocalBackend {
                         &app3,
                         &locale3,
                     );
+                    detect_audit_critical_notifications(
+                        &sess3, &sources3, &ac3, &nak3, &app3,
+                    );
                     // Send to indexer thread (non-blocking).
                     let _ = idx_tx3.send(sessions_to_index_request(&sess3.lock().unwrap()));
                 }
@@ -316,6 +332,7 @@ impl LocalBackend {
             waiting_alerts,
             session_outcomes,
             audit_cache,
+            notified_audit_keys,
             search_index,
             index_tx,
             _watcher: watcher,
@@ -1028,6 +1045,148 @@ pub(crate) fn send_os_notification(app: &AppHandle, title: &str, body: &str) {
         log_debug(&format!("[notify] tauri notification failed: {e}"));
     } else {
         log_debug("[notify] tauri notification sent");
+    }
+}
+
+// ── Audit critical event notifications ───────────────────────────────────────
+
+/// Scans for new critical audit events and emits OS + in-app notifications for
+/// each one that hasn't been notified yet.
+fn detect_audit_critical_notifications(
+    sessions: &Arc<Mutex<Vec<SessionInfo>>>,
+    sources: &Arc<Vec<Box<dyn AgentSource>>>,
+    audit_cache: &Arc<Mutex<HashMap<String, (u64, Vec<crate::audit::AuditEvent>)>>>,
+    notified_keys: &Arc<Mutex<HashSet<String>>>,
+    app: &AppHandle,
+) {
+    let mode = get_notification_mode(app);
+    if mode == "none" {
+        return;
+    }
+
+    // Scan audit events using the same logic as get_audit_events(), sharing the
+    // cache to avoid re-reading unchanged files.
+    let all_sessions = sessions.lock().unwrap().clone();
+    let active: Vec<_> = all_sessions
+        .into_iter()
+        .filter(|s| s.status != SessionStatus::Idle)
+        .collect();
+
+    let active_ids: HashSet<String> = active.iter().map(|s| s.id.clone()).collect();
+    let mut cache = audit_cache.lock().unwrap();
+    cache.retain(|id, _| active_ids.contains(id));
+
+    let mut critical_events = Vec::new();
+    for session in &active {
+        let path = &session.jsonl_path;
+        let is_plain_path = !path.contains("://");
+
+        if is_plain_path {
+            let file_size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+            let (prev_offset, prev_events) = cache
+                .get(&session.id)
+                .cloned()
+                .unwrap_or((0, Vec::new()));
+
+            if file_size <= prev_offset {
+                // Unchanged — check cached events for critical.
+                for e in &prev_events {
+                    if e.risk_level == crate::audit::AuditRiskLevel::Critical {
+                        critical_events.push(e.clone());
+                    }
+                }
+                continue;
+            }
+
+            let new_messages = match fs::File::open(path) {
+                Ok(mut file) => {
+                    if file.seek(SeekFrom::Start(prev_offset)).is_err() {
+                        for e in &prev_events {
+                            if e.risk_level == crate::audit::AuditRiskLevel::Critical {
+                                critical_events.push(e.clone());
+                            }
+                        }
+                        continue;
+                    }
+                    let mut buf = String::new();
+                    if file.read_to_string(&mut buf).is_err() {
+                        for e in &prev_events {
+                            if e.risk_level == crate::audit::AuditRiskLevel::Critical {
+                                critical_events.push(e.clone());
+                            }
+                        }
+                        continue;
+                    }
+                    buf.lines()
+                        .filter(|l| !l.trim().is_empty())
+                        .filter_map(|l| serde_json::from_str(l).ok())
+                        .collect::<Vec<serde_json::Value>>()
+                }
+                Err(_) => {
+                    for e in &prev_events {
+                        if e.risk_level == crate::audit::AuditRiskLevel::Critical {
+                            critical_events.push(e.clone());
+                        }
+                    }
+                    continue;
+                }
+            };
+
+            let new_events = crate::audit::extract_audit_events(&new_messages, session);
+            let mut combined = prev_events;
+            combined.extend(new_events);
+            cache.insert(session.id.clone(), (file_size, combined.clone()));
+            for e in &combined {
+                if e.risk_level == crate::audit::AuditRiskLevel::Critical {
+                    critical_events.push(e.clone());
+                }
+            }
+        } else {
+            let source = sources.iter().find(|s| {
+                let prefix = s.uri_prefix();
+                !prefix.is_empty() && path.starts_with(prefix)
+            });
+            if let Some(src) = source {
+                if let Ok(messages) = src.get_messages(path) {
+                    let events = crate::audit::extract_audit_events(&messages, session);
+                    for e in &events {
+                        if e.risk_level == crate::audit::AuditRiskLevel::Critical {
+                            critical_events.push(e.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    drop(cache);
+
+    // Find events that haven't been notified yet.
+    let mut nk = notified_keys.lock().unwrap();
+    for event in &critical_events {
+        let key = event.dedup_key();
+        if nk.contains(&key) {
+            continue;
+        }
+        nk.insert(key.clone());
+
+        let title = format!("⚠ CRITICAL: {}", event.workspace_name);
+        let body = event.command_summary.clone();
+        send_os_notification(app, &title, &body);
+
+        let alert = crate::audit::AuditAlert {
+            key,
+            session_id: event.session_id.clone(),
+            workspace_name: event.workspace_name.clone(),
+            command_summary: event.command_summary.clone(),
+            risk_tags: event.risk_tags.clone(),
+            detected_at_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            jsonl_path: event.jsonl_path.clone(),
+        };
+        let _ = app.emit("audit-critical-alert", &alert);
+        log_debug(&format!("[audit] critical alert emitted: {}", event.command_summary));
     }
 }
 

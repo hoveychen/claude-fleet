@@ -19,18 +19,13 @@
   gap: 10px;
   padding: 14px 16px 10px;
   flex-shrink: 0;
+  position: relative;
 }
 
 :global([data-platform="macos"]) .header {
-  padding-top: 42px;
-}
-
-.app_icon {
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
-  flex-shrink: 0;
-  object-fit: contain;
+  padding: 0 16px 0 80px;
+  height: 38px;
+  -webkit-app-region: drag;
 }
 
 .title {
@@ -39,15 +34,7 @@
   color: var(--color-text);
   margin: 0;
   flex: 1;
-}
-
-.count {
-  font-size: 11px;
-  background: var(--color-bg-secondary);
-  color: var(--color-text-dim);
-  padding: 2px 7px;
-  border-radius: 8px;
-  font-variant-numeric: tabular-nums;
+  -webkit-app-region: drag;
 }
 
 /* ── Nav ─────────────────────────────────────────────────────────────────── */
@@ -98,6 +85,19 @@
 
 .nav_label {
   flex: 1;
+}
+
+.nav_badge {
+  font-size: 10px;
+  font-weight: 700;
+  background: #ef4444;
+  color: #fff;
+  border-radius: 8px;
+  padding: 1px 6px;
+  min-width: 18px;
+  text-align: center;
+  line-height: 1.4;
+  flex-shrink: 0;
 }
 
 /* ── Separator ───────────────────────────────────────────────────────────── */

@@ -3,8 +3,9 @@ import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { useOverlayStore, useSessionsStore } from "../store";
 import { getItem } from "../storage";
-import type { SessionInfo, SessionOutcome } from "../types";
+import type { SessionInfo } from "../types";
 import { RobotFrame } from "./RobotFrame";
+import { useMood } from "./useMood";
 import styles from "./MascotEyes.module.css";
 
 // ── Dynamic quip generation ─────────────────────────────────────────────────
@@ -19,96 +20,7 @@ export type MascotMood =
   | "satisfied" | "bored" | "lonely" | "sleepy"
   | "attentive" | "proud" | "frustrated" | "embarrassed";
 
-// ── Outcome → mood mapping ──────────────────────────────────────────────────
-
-const OUTCOME_MOOD_MAP: Record<SessionOutcome, MascotMood> = {
-  needs_input:   "attentive",
-  bug_fixed:     "proud",
-  feature_added: "proud",
-  stuck:         "frustrated",
-  apologizing:   "embarrassed",
-  show_off:      "satisfied",
-  concerned:     "anxious",
-  confused:      "anxious",
-  celebrating:   "excited",
-  quick_fix:     "satisfied",
-  overwhelmed:   "frustrated",
-  scheming:      "focused",
-  reporting:     "satisfied",   // neutral fallback
-};
-
-// ── Promotion ────────────────────────────────────────────────────────────────
-
-function promoteSessions(sessions: SessionInfo[]): SessionInfo[] {
-  const activeSubagentParentIds = new Set(
-    sessions
-      .filter(
-        (s) =>
-          s.isSubagent && s.parentSessionId &&
-          ["thinking", "executing", "streaming", "processing", "waitingInput", "active"].includes(s.status)
-      )
-      .map((s) => s.parentSessionId!)
-  );
-  return sessions.map((s) =>
-    !s.isSubagent &&
-    ["idle", "active", "waitingInput", "processing"].includes(s.status) &&
-    activeSubagentParentIds.has(s.id)
-      ? { ...s, status: "delegating" as const }
-      : s
-  );
-}
-
-// ── Mood derivation ──────────────────────────────────────────────────────────
-
-function deriveMood(sessions: SessionInfo[]): MascotMood {
-  if (sessions.length === 0) return "lonely";
-  const promoted = promoteSessions(sessions);
-  const busyStatuses = ["thinking", "executing", "streaming", "processing", "active", "delegating"];
-  const busy = promoted.filter((s) => busyStatuses.includes(s.status));
-  const waiting = promoted.filter((s) => s.status === "waitingInput");
-  const idle = promoted.filter((s) => s.status === "idle");
-  const totalSpeed = promoted.reduce((sum, s) => sum + s.tokenSpeed, 0);
-
-  // No busy / no waiting → bored or sleepy
-  if (busy.length === 0 && waiting.length === 0) {
-    // Check idle sessions for recent outcomes (task just finished).
-    const outcomeMood = pickOutcomeMood([...idle, ...waiting]);
-    if (outcomeMood) return outcomeMood;
-    return idle.length > 3 ? "sleepy" : "bored";
-  }
-
-  // High throughput → excited
-  if (totalSpeed > 80 || busy.length >= 4) return "excited";
-
-  // Still busy → focused
-  if (busy.length >= 1) return "focused";
-
-  // Only waiting sessions remain — use outcome tags if available (Plan C).
-  if (waiting.length > 0 && busy.length === 0) {
-    const outcomeMood = pickOutcomeMood(waiting);
-    if (outcomeMood) return outcomeMood;
-    return "anxious";        // fallback when no analysis has run yet
-  }
-
-  return "satisfied";
-}
-
-/** Pick a mood from outcome tags across sessions.
- *  Plan C: if any session has `needs_input` → always "attentive".
- *  Otherwise pick a random outcome tag from the pool. */
-function pickOutcomeMood(sessions: SessionInfo[]): MascotMood | null {
-  const allTags: SessionOutcome[] = sessions
-    .flatMap((s) => (s.lastOutcome ?? []) as SessionOutcome[]);
-  if (allTags.length === 0) return null;
-
-  // needs_input always wins
-  if (allTags.includes("needs_input")) return "attentive";
-
-  // Deterministic pick: use a simple hash of the tags to choose one.
-  const hash = allTags.reduce((h, t) => h + t.charCodeAt(0), 0);
-  const tag = allTags[hash % allTags.length];
-  return OUTCOME_MOOD_MAP[tag] ?? null;
-}
+// Mood derivation is now in useMood.ts
 
 // ── Quip keys ────────────────────────────────────────────────────────────────
 
@@ -288,7 +200,7 @@ const EYE_COLOR = "var(--color-accent)";   // brand accent color
 export function MascotEyes({ embedded, onQuip }: { embedded?: boolean; onQuip?: (text: string | null) => void } = {}) {
   const { t, i18n } = useTranslation();
   const { sessions } = useSessionsStore();
-  const mood = useMemo(() => deriveMood(sessions), [sessions]);
+  const mood = useMood(sessions);
   const [expanded, setExpanded] = useState(true);
 
   const [isBlinking, setIsBlinking] = useState(false);
@@ -628,17 +540,19 @@ export function MascotEyes({ embedded, onQuip }: { embedded?: boolean; onQuip?: 
         );
       }
       case "heart": {
-        // Heart shape using cubic bezier curves
-        const s = size * 0.85;
-        const d = `M ${cx},${cy + s * 0.35}
-          C ${cx},${cy + s * 0.15} ${cx - s * 0.55},${cy - s * 0.15} ${cx - s * 0.55},${cy - s * 0.35}
-          C ${cx - s * 0.55},${cy - s * 0.6} ${cx},${cy - s * 0.55} ${cx},${cy - s * 0.25}
-          C ${cx},${cy - s * 0.55} ${cx + s * 0.55},${cy - s * 0.6} ${cx + s * 0.55},${cy - s * 0.35}
-          C ${cx + s * 0.55},${cy - s * 0.15} ${cx},${cy + s * 0.15} ${cx},${cy + s * 0.35} Z`;
+        // Classic heart: round lobes at top, rounded point at bottom
+        const sc = size / 16;
+        // Bottom tip uses a small arc for rounded corner instead of sharp point
+        const br = 2 * sc; // bottom rounding radius
+        const d = `M ${cx},${cy + (14 - br) * sc}
+          C ${cx - 2 * sc},${cy + 10 * sc} ${cx - 16 * sc},${cy + 4 * sc} ${cx - 16 * sc},${cy - 4 * sc}
+          C ${cx - 16 * sc},${cy - 12 * sc} ${cx - 8 * sc},${cy - 14 * sc} ${cx},${cy - 6 * sc}
+          C ${cx + 8 * sc},${cy - 14 * sc} ${cx + 16 * sc},${cy - 12 * sc} ${cx + 16 * sc},${cy - 4 * sc}
+          C ${cx + 16 * sc},${cy + 4 * sc} ${cx + 2 * sc},${cy + 10 * sc} ${cx},${cy + (14 - br) * sc} Z`;
         return (
           <g className={styles.eyeShape_heart}>
-            <path d={d} fill={EYE_COLOR} />
-            <path d={d} fill="url(#grad-special)" opacity={0.4} />
+            <path d={d} fill={EYE_COLOR} strokeLinejoin="round" stroke={EYE_COLOR} strokeWidth={br * 2} />
+            <path d={d} fill="url(#grad-special)" opacity={0.35} />
           </g>
         );
       }
@@ -656,6 +570,11 @@ export function MascotEyes({ embedded, onQuip }: { embedded?: boolean; onQuip?: 
 
     const blinkLid = isBlinking ? 0.95
       : Math.max(0, Math.min(baseLidTop + yawnLidExtra + dozeLidExtra + eurekaLidReduction, 0.95));
+    // When the right eye uses rightLidTop (wink), clamp lidBot so the
+    // top + bottom lids don't exceed 0.95 — otherwise the eye disappears.
+    const effectiveLidBot = isRight && rightLidTop !== undefined
+      ? Math.min(lidBot, Math.max(0, 0.95 - blinkLid))
+      : lidBot;
 
     // Eye position includes gaze offset
     const cx = baseCx + effectiveGaze.x;
@@ -677,7 +596,7 @@ export function MascotEyes({ embedded, onQuip }: { embedded?: boolean; onQuip?: 
 
     const eyeTop = cy - pRy;
     const lidTopHeight = pRy * 2 * blinkLid;
-    const lidBotHeight = pRy * 2 * lidBot;
+    const lidBotHeight = pRy * 2 * effectiveLidBot;
 
     return (
       <g className={moodJiggle ? styles.eyeJiggle : ""}>
@@ -715,7 +634,7 @@ export function MascotEyes({ embedded, onQuip }: { embedded?: boolean; onQuip?: 
             fill="var(--mascot-bg)" className={styles.eyelid}
           />
           {/* Bottom eyelid — rises from below */}
-          {lidBot > 0 && (
+          {effectiveLidBot > 0 && (
             <rect
               x={cx - pRx - 2}
               y={cy + pRy - lidBotHeight}
@@ -736,103 +655,104 @@ export function MascotEyes({ embedded, onQuip }: { embedded?: boolean; onQuip?: 
   const renderMouth = () => {
     switch (mood) {
       case "satisfied":
-        // happy wavy ~~ mouth
+        // wide happy wavy ~~
         return (
           <path
-            d={`M ${MOUTH_CX - 6},${MOUTH_CY} q 3,-3 6,0 q 3,3 6,0`}
-            fill="none" stroke="var(--color-accent)" strokeWidth={1.5}
-            strokeLinecap="round" opacity={0.7} className={styles.mouth}
+            d={`M ${MOUTH_CX - 10},${MOUTH_CY} q 5,-5 10,0 q 5,5 10,0`}
+            fill="none" stroke="var(--color-accent)" strokeWidth={2}
+            strokeLinecap="round" opacity={0.75} className={styles.mouth}
           />
         );
       case "excited":
         // big open grin
         return (
           <path
-            d={`M ${MOUTH_CX - 9},${MOUTH_CY - 2} q 9,10 18,0`}
-            fill="var(--color-accent)" fillOpacity={0.15} stroke="var(--color-accent)" strokeWidth={1.8}
-            strokeLinecap="round" opacity={0.8} className={styles.mouth}
+            d={`M ${MOUTH_CX - 12},${MOUTH_CY - 2} q 12,14 24,0`}
+            fill="var(--color-accent)" fillOpacity={0.2} stroke="var(--color-accent)" strokeWidth={2.2}
+            strokeLinecap="round" opacity={0.85} className={styles.mouth}
           />
         );
       case "focused":
-        // asymmetric thinking pout — one side slightly raised
+        // asymmetric thinking pout
         return (
           <path
-            d={`M ${MOUTH_CX - 5},${MOUTH_CY + 1} q 3,-2 6,-1 q 2,1 4,2`}
-            fill="none" stroke="var(--color-accent)" strokeWidth={1.2}
-            strokeLinecap="round" opacity={0.5} className={styles.mouth}
+            d={`M ${MOUTH_CX - 6},${MOUTH_CY + 1} q 4,-3 8,-1 q 2,1 4,2`}
+            fill="none" stroke="var(--color-accent)" strokeWidth={1.8}
+            strokeLinecap="round" opacity={0.6} className={styles.mouth}
           />
         );
       case "anxious":
-        // small worried squiggle
+        // worried squiggle
         return (
           <path
-            d={`M ${MOUTH_CX - 5},${MOUTH_CY} q 2.5,-2 5,0 q 2.5,2 5,0`}
-            fill="none" stroke="var(--color-accent)" strokeWidth={1.2}
-            strokeLinecap="round" opacity={0.5} className={styles.mouth}
+            d={`M ${MOUTH_CX - 8},${MOUTH_CY} q 4,-3 8,0 q 4,3 8,0`}
+            fill="none" stroke="var(--color-accent)" strokeWidth={1.8}
+            strokeLinecap="round" opacity={0.6} className={styles.mouth}
           />
         );
       case "bored":
         // flat line
         return (
           <line
-            x1={MOUTH_CX - 5} y1={MOUTH_CY} x2={MOUTH_CX + 5} y2={MOUTH_CY}
-            stroke="var(--color-accent)" strokeWidth={1.3}
-            strokeLinecap="round" opacity={0.5} className={styles.mouth}
+            x1={MOUTH_CX - 8} y1={MOUTH_CY} x2={MOUTH_CX + 8} y2={MOUTH_CY}
+            stroke="var(--color-accent)" strokeWidth={2}
+            strokeLinecap="round" opacity={0.55} className={styles.mouth}
           />
         );
       case "lonely":
-        // small frown
+        // deeper frown
         return (
           <path
-            d={`M ${MOUTH_CX - 5},${MOUTH_CY + 1} q 5,-4 10,0`}
-            fill="none" stroke="var(--color-accent)" strokeWidth={1.2}
-            strokeLinecap="round" opacity={0.5} className={styles.mouth}
-          />
-        );
-      case "sleepy":
-        // tiny open mouth (yawning-ish)
-        return (
-          <ellipse
-            cx={MOUTH_CX} cy={MOUTH_CY}
-            rx={3} ry={2}
-            fill="var(--color-accent)" opacity={0.3} className={styles.mouth}
-          />
-        );
-      case "attentive":
-        // small "o" mouth — surprised / curious
-        return (
-          <ellipse
-            cx={MOUTH_CX} cy={MOUTH_CY}
-            rx={3.5} ry={3}
-            fill="none" stroke="var(--color-accent)" strokeWidth={1.2}
-            opacity={0.6} className={styles.mouth}
-          />
-        );
-      case "proud":
-        // wide smug grin
-        return (
-          <path
-            d={`M ${MOUTH_CX - 8},${MOUTH_CY - 1} q 8,7 16,0`}
-            fill="none" stroke="var(--color-accent)" strokeWidth={1.5}
-            strokeLinecap="round" opacity={0.7} className={styles.mouth}
-          />
-        );
-      case "frustrated":
-        // tight frown
-        return (
-          <path
-            d={`M ${MOUTH_CX - 6},${MOUTH_CY + 2} q 6,-5 12,0`}
-            fill="none" stroke="var(--color-accent)" strokeWidth={1.5}
+            d={`M ${MOUTH_CX - 8},${MOUTH_CY + 2} q 8,-7 16,0`}
+            fill="none" stroke="var(--color-accent)" strokeWidth={2}
             strokeLinecap="round" opacity={0.6} className={styles.mouth}
           />
         );
-      case "embarrassed":
-        // lopsided cringe smile — one side up, one side down
+      case "sleepy":
+        // open yawn
+        return (
+          <ellipse
+            cx={MOUTH_CX} cy={MOUTH_CY}
+            rx={5} ry={4}
+            fill="var(--color-accent)" fillOpacity={0.25} stroke="var(--color-accent)" strokeWidth={1.5}
+            opacity={0.5} className={styles.mouth}
+          />
+        );
+      case "attentive":
+        // open "o" mouth — surprised / curious
+        return (
+          <ellipse
+            cx={MOUTH_CX} cy={MOUTH_CY}
+            rx={5} ry={4.5}
+            fill="none" stroke="var(--color-accent)" strokeWidth={1.8}
+            opacity={0.65} className={styles.mouth}
+          />
+        );
+      case "proud":
+        // wide confident grin
         return (
           <path
-            d={`M ${MOUTH_CX - 6},${MOUTH_CY + 1} q 4,-4 7,-1 q 2,3 5,2`}
-            fill="none" stroke="var(--color-accent)" strokeWidth={1.3}
-            strokeLinecap="round" opacity={0.5} className={styles.mouth}
+            d={`M ${MOUTH_CX - 11},${MOUTH_CY - 1} q 11,10 22,0`}
+            fill="var(--color-accent)" fillOpacity={0.1} stroke="var(--color-accent)" strokeWidth={2}
+            strokeLinecap="round" opacity={0.75} className={styles.mouth}
+          />
+        );
+      case "frustrated":
+        // tight scowl
+        return (
+          <path
+            d={`M ${MOUTH_CX - 8},${MOUTH_CY + 3} q 8,-7 16,0`}
+            fill="none" stroke="var(--color-accent)" strokeWidth={2.2}
+            strokeLinecap="round" opacity={0.7} className={styles.mouth}
+          />
+        );
+      case "embarrassed":
+        // lopsided cringe
+        return (
+          <path
+            d={`M ${MOUTH_CX - 8},${MOUTH_CY + 1} q 5,-5 9,-1 q 3,4 7,2`}
+            fill="none" stroke="var(--color-accent)" strokeWidth={1.8}
+            strokeLinecap="round" opacity={0.6} className={styles.mouth}
           />
         );
       default:

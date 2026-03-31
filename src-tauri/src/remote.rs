@@ -152,6 +152,9 @@ pub struct RemoteBackend {
     /// Semantic outcome tags per session, set by background analysis.
     #[allow(dead_code)]
     session_outcomes: Arc<Mutex<std::collections::HashMap<String, Vec<String>>>>,
+    /// Keys of critical audit events for which notifications have already been sent.
+    #[allow(dead_code)]
+    notified_audit_keys: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 impl Drop for RemoteBackend {
@@ -831,6 +834,8 @@ fn connect_remote_start_probe(
         Arc::new(Mutex::new(std::collections::HashMap::new()));
     let session_outcomes: Arc<Mutex<std::collections::HashMap<String, Vec<String>>>> =
         Arc::new(Mutex::new(std::collections::HashMap::new()));
+    let notified_audit_keys: Arc<Mutex<std::collections::HashSet<String>>> =
+        Arc::new(Mutex::new(std::collections::HashSet::new()));
 
     // Do an initial synchronous fetch so list_sessions() is populated immediately.
     if let Ok(s) = probe.get::<Vec<SessionInfo>>("/sessions") {
@@ -848,6 +853,7 @@ fn connect_remote_start_probe(
         let wa2 = waiting_alerts.clone();
         let so2 = session_outcomes.clone();
         let probe2 = probe.clone();
+        let nak2 = notified_audit_keys.clone();
         let locale = app
             .try_state::<crate::AppState>()
             .map(|s| s.locale.lock().unwrap().clone())
@@ -1002,6 +1008,45 @@ fn connect_remote_start_probe(
                         prev_statuses.insert(sess.id.clone(), sess.status.clone());
                     }
                 }
+
+                // ── Audit critical event notifications ─────────────────────
+                {
+                    let mode = crate::local_backend::get_notification_mode(&app2);
+                    if mode != "none" {
+                        if let Ok(summary) = probe2.get::<crate::audit::AuditSummary>("/audit") {
+                            let mut nk = nak2.lock().unwrap();
+                            for event in &summary.events {
+                                if event.risk_level != crate::audit::AuditRiskLevel::Critical {
+                                    continue;
+                                }
+                                let key = event.dedup_key();
+                                if nk.contains(&key) {
+                                    continue;
+                                }
+                                nk.insert(key.clone());
+
+                                let title = format!("⚠ CRITICAL: {}", event.workspace_name);
+                                crate::local_backend::send_os_notification(
+                                    &app2, &title, &event.command_summary,
+                                );
+
+                                let alert = crate::audit::AuditAlert {
+                                    key,
+                                    session_id: event.session_id.clone(),
+                                    workspace_name: event.workspace_name.clone(),
+                                    command_summary: event.command_summary.clone(),
+                                    risk_tags: event.risk_tags.clone(),
+                                    detected_at_ms: SystemTime::now()
+                                        .duration_since(UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_millis() as u64,
+                                    jsonl_path: event.jsonl_path.clone(),
+                                };
+                                let _ = app2.emit("audit-critical-alert", &alert);
+                            }
+                        }
+                    }
+                }
             }
         });
     }
@@ -1024,6 +1069,7 @@ fn connect_remote_start_probe(
         sessions,
         watch: Arc::new(crate::backend::WatchState::new()),
         waiting_alerts,
+        notified_audit_keys,
         session_outcomes,
     })
 }

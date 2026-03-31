@@ -2,7 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useConnectionStore, useDetailStore, useSessionsStore, useUIStore } from "../store";
+import { useAuditStore, useConnectionStore, useDetailStore, useSessionsStore, useUIStore } from "../store";
 import type { SessionInfo } from "../types";
 import { GalleryView } from "./GalleryView";
 import { MascotEyes } from "./MascotEyes";
@@ -15,7 +15,6 @@ import { SettingsPanel } from "./SettingsPanel";
 import styles from "./SessionList.module.css";
 import { TokenSpeedChart } from "./TokenSpeedChart";
 import { UsagePanel } from "./UsagePanel";
-import { AlertBadge } from "./WaitingAlerts";
 import { useSessionSearch } from "../hooks/useSessionSearch";
 import { getItem, setItem } from "../storage";
 
@@ -38,6 +37,7 @@ export function SessionList() {
   const { session: viewedSession, open } = useDetailStore();
   const { viewMode, setViewMode } = useUIStore();
   const { connection } = useConnectionStore();
+  const unreadCriticalCount = useAuditStore((s) => s.unreadCriticalCount);
   const [filter, setFilter] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(getSavedWidth);
@@ -49,6 +49,14 @@ export function SessionList() {
   useEffect(() => {
     refresh();
     invoke<string>("get_platform").then((p) => setIsWindows(p === "windows"));
+    // Load audit data for the unread critical badge
+    invoke<import("../types").AuditSummary>("get_audit_events")
+      .then((data) => {
+        useAuditStore.getState().setCriticalEvents(
+          data.events.filter((e) => e.riskLevel === "critical")
+        );
+      })
+      .catch(() => {});
     const unlistenPromise = listen<SessionInfo[]>("sessions-updated", (e) => {
       setSessions(e.payload);
     });
@@ -169,11 +177,6 @@ export function SessionList() {
     ));
   }
 
-  // Count active agents for header
-  const activeCount = sessions.filter((s) =>
-    ["thinking", "executing", "streaming", "processing", "waitingInput", "active", "delegating"].includes(s.status)
-  ).length;
-
   const isRemote = connection?.type === "remote";
 
   return (
@@ -181,13 +184,8 @@ export function SessionList() {
       <aside className={styles.sidebar} style={{ width: sidebarWidth }}>
         {/* Header — hidden on Windows (title bar already shows product name) */}
         {!isWindows && (
-          <div className={styles.header}>
-            <img src="/app-icon.png" className={styles.app_icon} alt="icon" />
-            <h1 className={styles.title}>{t("title")}</h1>
-            <span className={styles.count} title={`${activeCount} active`}>
-              {sessions.length}
-            </span>
-            <AlertBadge />
+          <div className={styles.header} data-tauri-drag-region>
+            <h1 className={styles.title} data-tauri-drag-region>{t("title")}</h1>
           </div>
         )}
 
@@ -213,6 +211,9 @@ export function SessionList() {
           >
             <span className={styles.nav_icon}>⛨</span>
             <span className={styles.nav_label}>{t("view_audit")}</span>
+            {unreadCriticalCount > 0 && (
+              <span className={styles.nav_badge}>{unreadCriticalCount}</span>
+            )}
           </button>
         </nav>
 
@@ -276,6 +277,7 @@ export function SessionList() {
             filter={filter}
             onFilterChange={setFilter}
             activeCount={active.length}
+            totalCount={sessions.length}
             showAll={showAll}
             onToggleShowAll={() => setShowAll((v) => !v)}
             ftsMatchCount={filter.trim().length >= 2 ? ftsMatchPaths.size : undefined}

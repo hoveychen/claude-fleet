@@ -281,6 +281,7 @@ export function GalleryView() {
         filter={filter}
         onFilterChange={setFilter}
         activeCount={activeSessions.filter((s) => !s.isSubagent).length}
+        totalCount={sessions.length}
         showAll={showAll}
         onToggleShowAll={() => setShowAll((v) => !v)}
         ftsMatchCount={filter.trim().length >= 2 ? ftsMatchPaths.size : undefined}
