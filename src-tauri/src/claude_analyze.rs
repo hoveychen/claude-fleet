@@ -8,6 +8,23 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
+/// Kill a process by PID in a cross-platform way.
+fn kill_process(pid: u32) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(pid as i32, libc::SIGKILL);
+    }
+    #[cfg(windows)]
+    {
+        // On Windows, use taskkill to forcefully terminate the process tree
+        let _ = Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
 /// Truncate a string to at most `max` bytes on a valid UTF-8 char boundary.
 fn truncate_str(s: &str, max: usize) -> &str {
     if s.len() <= max {
@@ -177,9 +194,7 @@ pub fn analyze_session_outcome(last_text: &str, locale: &str, session_id: &str) 
         Err(_) => {
             log_debug(&format!("[claude_analyze] [{sid}] timed out after {}s, killing child process (pid={})",
                 ANALYSIS_TIMEOUT.as_secs(), child_id));
-            unsafe {
-                libc::kill(child_id as i32, libc::SIGKILL);
-            }
+            kill_process(child_id);
             return None;
         }
     };
@@ -461,10 +476,7 @@ pub fn generate_mascot_quips(busy_titles: &[String], done_titles: &[String], loc
         }
         Err(_) => {
             log_debug("[mascot_quips] timed out, killing child process");
-            // Kill the child process to avoid leaking resources
-            unsafe {
-                libc::kill(child_id as i32, libc::SIGKILL);
-            }
+            kill_process(child_id);
             return MascotQuips::default();
         }
     };
