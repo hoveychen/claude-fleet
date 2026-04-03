@@ -1169,6 +1169,11 @@ fn cmd_serve(port: u16, token: String) {
         ReportStore::open().expect("report store open"),
     ));
 
+    // Load the persistent audit history.
+    let audit_history = Arc::new(Mutex::new(
+        claw_fleet_lib::audit::AuditHistory::load(),
+    ));
+
     // Open the full-text search index (stored on the remote host).
     let search_index = {
         let db_path = dirs::home_dir()
@@ -1648,21 +1653,52 @@ fn cmd_serve(port: u16, token: String) {
             "/audit" => {
                 use claw_fleet_lib::audit::extract_audit_events;
                 let sessions = scan_all_sources(&sources);
-                let active: Vec<&SessionInfo> = sessions
+                let active_ids: std::collections::HashSet<String> = sessions
                     .iter()
                     .filter(|s| !matches!(s.status, SessionStatus::Idle))
+                    .map(|s| s.id.clone())
+                    .collect();
+                let active: Vec<&SessionInfo> = sessions
+                    .iter()
+                    .filter(|s| active_ids.contains(&s.id))
                     .collect();
                 let total = active.len();
-                let mut all_events = Vec::new();
+
+                // Scan active sessions for audit events.
+                let mut live_events = Vec::new();
                 for session in &active {
                     let path = &session.jsonl_path;
                     if let Some(src) = find_source_for_path(&sources, path) {
                         if let Ok(messages) = src.get_messages(path) {
                             let events = extract_audit_events(&messages, session);
-                            all_events.extend(events);
+                            live_events.extend(events);
                         }
                     }
                 }
+
+                // Persist events from idle sessions into history.
+                let idle: Vec<&SessionInfo> = sessions
+                    .iter()
+                    .filter(|s| matches!(s.status, SessionStatus::Idle))
+                    .collect();
+                let mut idle_events = Vec::new();
+                for session in &idle {
+                    let path = &session.jsonl_path;
+                    if let Some(src) = find_source_for_path(&sources, path) {
+                        if let Ok(messages) = src.get_messages(path) {
+                            let events = extract_audit_events(&messages, session);
+                            idle_events.extend(events);
+                        }
+                    }
+                }
+
+                let mut hist = audit_history.lock().unwrap();
+                hist.persist_evicted(idle_events);
+                hist.remove_sessions(&active_ids);
+                let mut all_events: Vec<_> = hist.events().to_vec();
+                drop(hist);
+                all_events.extend(live_events);
+
                 all_events.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
                 let summary = claw_fleet_lib::audit::AuditSummary {
                     events: all_events,

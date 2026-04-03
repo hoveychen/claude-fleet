@@ -85,13 +85,26 @@ struct TtsVoice {
 }
 
 #[cfg(feature = "tts")]
-static VOICES_CACHE: OnceLock<Vec<msedge_tts::voice::Voice>> = OnceLock::new();
+static VOICES_CACHE: std::sync::Mutex<Option<Vec<msedge_tts::voice::Voice>>> =
+    std::sync::Mutex::new(None);
 
 #[cfg(feature = "tts")]
-fn cached_voices() -> &'static Vec<msedge_tts::voice::Voice> {
-    VOICES_CACHE.get_or_init(|| {
-        msedge_tts::voice::get_voices_list().unwrap_or_default()
-    })
+fn cached_voices() -> Vec<msedge_tts::voice::Voice> {
+    {
+        let guard = VOICES_CACHE.lock().unwrap();
+        if let Some(ref v) = *guard {
+            return v.clone();
+        }
+    }
+    // Not cached yet — fetch (may fail on bad network)
+    match msedge_tts::voice::get_voices_list() {
+        Ok(voices) if !voices.is_empty() => {
+            let mut guard = VOICES_CACHE.lock().unwrap();
+            *guard = Some(voices.clone());
+            voices
+        }
+        _ => vec![],
+    }
 }
 
 #[cfg(feature = "tts")]
@@ -194,7 +207,7 @@ fn make_tts_voice(v: &msedge_tts::voice::Voice, locale: &str) -> TtsVoice {
 #[tauri::command]
 async fn get_tts_voices(locale: String) -> Vec<TtsVoice> {
     let ui_locale = locale.clone();
-    let voices = match tokio::task::spawn_blocking(|| cached_voices().clone()).await {
+    let voices = match tokio::task::spawn_blocking(cached_voices).await {
         Ok(v) => v,
         Err(_) => return vec![],
     };
@@ -1126,50 +1139,6 @@ fn install_fleet_skill() -> Result<SkillInstallResult, String> {
     Ok(SkillInstallResult { installed, errors })
 }
 
-// ── TCC diagnostics ─────────────────────────────────────────────────────────
-
-/// Run macOS TCC diagnostics to identify what triggers permission dialogs.
-#[tauri::command]
-fn diagnose_tcc() -> tcc::TccDiagnostic {
-    let diag = tcc::diagnose();
-    // Also write findings to the debug log.
-    if diag.findings.is_empty() {
-        log_debug("[TCC-DIAG] No TCC-triggering code paths detected.");
-    } else {
-        log_debug(&format!(
-            "[TCC-DIAG] Found {} potential TCC triggers:",
-            diag.findings.len()
-        ));
-        for f in &diag.findings {
-            log_debug(&format!(
-                "[TCC-DIAG]   [{}/{}] {} — {}",
-                f.component, f.tcc_category, f.path, f.reason,
-            ));
-        }
-    }
-    log_debug(&format!(
-        "[TCC-DIAG] sysinfo: {} processes scanned, {} matched, phase1_safe={}",
-        diag.sysinfo_process_count,
-        diag.sysinfo_matched_processes.len(),
-        diag.sysinfo_phase1_safe,
-    ));
-    if !diag.tcc_triggering_workspaces.is_empty() {
-        log_debug(&format!(
-            "[TCC-DIAG] {} workspace dirs would trigger TCC during decode:",
-            diag.tcc_triggering_workspaces.len(),
-        ));
-        for ws in &diag.tcc_triggering_workspaces {
-            for tp in &ws.tcc_paths {
-                log_debug(&format!(
-                    "[TCC-DIAG]   '{}' → probes {} ({})",
-                    ws.encoded, tp.path, tp.tcc_category,
-                ));
-            }
-        }
-    }
-    diag
-}
-
 // ── Memory commands ──────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -1645,9 +1614,6 @@ pub fn run() {
             tray_panel_shown_at: Arc::new(Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(600))),
         })
         .setup(move |app| {
-            log_debug("[TCC-SETUP] App setup starting — querying TCC before backend init");
-            tcc::log_recent_tcc_events();
-
             // Replace NullBackend with the real LocalBackend now that AppHandle
             // is available.
             {
@@ -1664,9 +1630,6 @@ pub fn run() {
                 );
                 *state.backend.write().unwrap() = Box::new(local);
             }
-
-            log_debug("[TCC-SETUP] Backend initialized — querying TCC after backend init");
-            tcc::log_recent_tcc_events();
 
             // Truncate the hook events file if it has grown too large.
             hooks::maybe_truncate_events_file();
@@ -1842,7 +1805,6 @@ pub fn run() {
             remote::connect_remote,
             remote::disconnect_remote,
             pick_file,
-            diagnose_tcc,
             get_source_account,
             get_source_usage,
             list_memories,

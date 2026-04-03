@@ -40,6 +40,9 @@ pub struct LocalBackend {
     /// Audit cache: maps session ID → (last-scanned byte offset, cached events).
     /// Cleared when a session disappears from the active list.
     audit_cache: Arc<Mutex<HashMap<String, (u64, Vec<crate::audit::AuditEvent>)>>>,
+    /// Persistent audit history — events from sessions that went idle are saved
+    /// here so they survive process restarts.
+    audit_history: Arc<Mutex<crate::audit::AuditHistory>>,
     /// Keys of critical audit events for which OS notifications have already been
     /// sent.  Prevents duplicate notifications across rescans.
     #[allow(dead_code)]
@@ -65,6 +68,15 @@ impl LocalBackend {
         locale: Arc<Mutex<String>>,
         sources: Vec<Box<dyn AgentSource>>,
     ) -> Self {
+        let _t0 = std::time::Instant::now();
+        macro_rules! step {
+            ($label:expr) => {
+                let elapsed = _t0.elapsed().as_millis();
+                crate::log_debug(&format!("[BACKEND-INIT] {} at +{}ms", $label, elapsed));
+            };
+        }
+        step!("start");
+
         let sources = Arc::new(sources);
         let sessions: Arc<Mutex<Vec<SessionInfo>>> = Arc::new(Mutex::new(Vec::new()));
         let watch = Arc::new(crate::backend::WatchState::new());
@@ -76,6 +88,10 @@ impl LocalBackend {
             Arc::new(Mutex::new(HashMap::new()));
         let notified_audit_keys: Arc<Mutex<HashSet<String>>> =
             Arc::new(Mutex::new(HashSet::new()));
+        let audit_history: Arc<Mutex<crate::audit::AuditHistory>> =
+            Arc::new(Mutex::new(crate::audit::AuditHistory::load()));
+
+        step!("allocs done");
 
         // Open (or create) the full-text search index.
         let search_index = Arc::new(Mutex::new(
@@ -100,6 +116,8 @@ impl LocalBackend {
             }),
         ));
 
+        step!("DBs opened");
+
         // Dedicated indexer thread — receives session lists via channel,
         // coalesces rapid requests, and runs indexing off the scan threads.
         let (index_tx, index_rx) = std::sync::mpsc::channel::<IndexRequest>();
@@ -113,6 +131,8 @@ impl LocalBackend {
                 .expect("failed to spawn indexer thread");
         }
 
+        step!("indexer spawned");
+
         // Initial scan — run in a background thread so the UI appears immediately.
         {
             let app_bg = app.clone();
@@ -120,16 +140,7 @@ impl LocalBackend {
             let sources_bg = sources.clone();
             let idx_tx = index_tx.clone();
             std::thread::spawn(move || {
-                let scan_start = std::time::Instant::now();
                 let initial = crate::session::scan_all_sources(&sources_bg);
-                let total_ms = scan_start.elapsed().as_millis();
-                if total_ms > 2000 {
-                    crate::log_debug(&format!(
-                        "[TCC-STALL] Full initial scan took {}ms", total_ms,
-                    ));
-                    // Query macOS TCC system log for recent prompts about our app.
-                    crate::tcc::log_recent_tcc_events();
-                }
                 *sess_bg.lock().unwrap() = initial.clone();
                 let _ = app_bg.emit("sessions-updated", &initial);
                 let _ = app_bg.emit("scan-ready", true);
@@ -139,6 +150,8 @@ impl LocalBackend {
                 let _ = idx_tx.send(sessions_to_index_request(&initial));
             });
         }
+
+        step!("scan thread spawned");
 
         // Set up filesystem watcher for all sources that use Filesystem strategy.
         let (tx, rx) = std::sync::mpsc::channel();
@@ -166,6 +179,8 @@ impl LocalBackend {
             }
         }
 
+        step!("watch paths registered");
+
         // Also watch memory_watch_paths() for every source (filesystem or polling)
         // that stores memory outside of its session watch dirs.
         for source in sources.iter() {
@@ -179,6 +194,8 @@ impl LocalBackend {
                 }
             }
         }
+
+        step!("memory watch paths registered");
 
         // Shared analyzing set — prevents duplicate analysis when both the
         // filesystem watcher and the polling thread detect the same transition.
@@ -379,7 +396,9 @@ impl LocalBackend {
         // Start the daily report scheduler (backfills missing reports in background).
         crate::daily_report::start_report_scheduler(report_store.clone(), locale.clone());
 
-        LocalBackend {
+        step!("threads spawned, constructing result");
+
+        let result = LocalBackend {
             app,
             sources,
             sessions,
@@ -387,13 +406,16 @@ impl LocalBackend {
             waiting_alerts,
             session_outcomes,
             audit_cache,
+            audit_history,
             notified_audit_keys,
             search_index,
             index_tx,
             report_store,
             locale,
             _watcher: watcher,
-        }
+        };
+        step!("LocalBackend::new() complete");
+        result
     }
 }
 
@@ -500,28 +522,8 @@ fn incremental_rescan_and_emit(
 
     for &idx in dirty {
         if let Some(source) = sources.get(idx) {
-            let name = source.name();
-            let t0 = std::time::Instant::now();
-            let avail = source.is_available();
-            let avail_ms = t0.elapsed().as_millis();
-            if avail_ms > 2000 {
-                crate::log_debug(&format!(
-                    "[TCC-STALL] incremental {}.is_available() took {}ms",
-                    name, avail_ms,
-                ));
-            }
-            if avail {
-                let t1 = std::time::Instant::now();
-                let src_sessions = source.scan_sessions();
-                let scan_ms = t1.elapsed().as_millis();
-                if scan_ms > 2000 {
-                    crate::log_debug(&format!(
-                        "[TCC-STALL] incremental {}.scan_sessions() took {}ms",
-                        name, scan_ms,
-                    ));
-                    crate::tcc::log_recent_tcc_events();
-                }
-                s.extend(src_sessions);
+            if source.is_available() {
+                s.extend(source.scan_sessions());
             }
         }
     }
@@ -893,10 +895,28 @@ impl Backend for LocalBackend {
 
         let mut cache = self.audit_cache.lock().unwrap();
 
-        // Evict sessions that are no longer active.
+        // Collect events from sessions that just went idle — persist them
+        // before evicting from the cache.
+        let evicted: Vec<crate::audit::AuditEvent> = cache
+            .iter()
+            .filter(|(id, _)| !active_ids.contains(id.as_str()))
+            .flat_map(|(_, (_, events))| events.clone())
+            .collect();
         cache.retain(|id, _| active_ids.contains(id));
 
+        let mut history = self.audit_history.lock().unwrap();
+        history.persist_evicted(evicted);
+
+        // If a session became active again, remove it from history so we don't
+        // double-count.  The live cache will re-scan the full file.
+        history.remove_sessions(&active_ids);
+
         let mut all_events = Vec::new();
+
+        // Include persisted historical events.
+        all_events.extend_from_slice(history.events());
+        drop(history);
+
         for session in &sessions {
             let path = &session.jsonl_path;
             let is_plain_path = !path.contains("://");

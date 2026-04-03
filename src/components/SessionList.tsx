@@ -48,7 +48,6 @@ export function SessionList() {
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   useEffect(() => {
-    refresh();
     invoke<string>("get_platform").then((p) => setIsWindows(p === "windows"));
     // Load audit data for the unread critical badge
     invoke<import("../types").AuditSummary>("get_audit_events")
@@ -58,12 +57,21 @@ export function SessionList() {
         );
       })
       .catch(() => {});
+    // Register event listeners BEFORE calling refresh() to avoid a race
+    // condition: on Linux the initial background scan can complete so fast
+    // that the "sessions-updated" event fires before the listener is set up,
+    // causing existing sessions to be invisible until a new one is created.
     const unlistenPromise = listen<SessionInfo[]>("sessions-updated", (e) => {
       setSessions(e.payload);
     });
     const unlistenScanReady = listen<boolean>("scan-ready", () => {
       setScanReady(true);
     });
+    // Refresh after listeners are registered. Even if the initial scan event
+    // was already emitted, this fetch will pick up whatever has been scanned
+    // so far; and any future events will be caught by the listeners above.
+    unlistenPromise.then(() => refresh());
+    unlistenScanReady.then(() => refresh());
     return () => {
       unlistenPromise.then((u) => u());
       unlistenScanReady.then((u) => u());

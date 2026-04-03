@@ -677,6 +677,105 @@ pub fn extract_audit_events(
     events
 }
 
+// ── Persistent audit history ───────────────────────────────────────────────
+
+/// On-disk store for audit events that survives process restarts.
+/// Events from sessions that are no longer active get persisted here so the
+/// user can review historical audit data.
+///
+/// File: `~/.claude/fleet-audit-history.json`
+pub struct AuditHistory {
+    events: Vec<AuditEvent>,
+    /// Session IDs whose events are already persisted — used to avoid
+    /// re-persisting events that were loaded from disk.
+    known_session_ids: std::collections::HashSet<String>,
+}
+
+const AUDIT_HISTORY_FILE: &str = "fleet-audit-history.json";
+
+/// Maximum number of events kept on disk.  Oldest events (by timestamp) are
+/// dropped when this limit is exceeded.
+const MAX_HISTORY_EVENTS: usize = 10_000;
+
+fn history_file_path() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|h| h.join(".claude").join(AUDIT_HISTORY_FILE))
+}
+
+impl AuditHistory {
+    /// Load persisted history from disk.  Returns an empty history if the file
+    /// is absent or malformed.
+    pub fn load() -> Self {
+        let events: Vec<AuditEvent> = history_file_path()
+            .and_then(|p| std::fs::read_to_string(&p).ok())
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let known_session_ids = events.iter().map(|e| e.session_id.clone()).collect();
+        Self {
+            events,
+            known_session_ids,
+        }
+    }
+
+    /// Persist current history to disk.
+    pub fn save(&self) {
+        if let Some(path) = history_file_path() {
+            if let Ok(json) = serde_json::to_string(&self.events) {
+                let _ = std::fs::write(&path, json);
+            }
+        }
+    }
+
+    /// Merge events from sessions that just went idle (evicted from the
+    /// in-memory cache).  Only events from sessions not already in the history
+    /// are added.  Triggers a save to disk if new events were added.
+    pub fn persist_evicted(
+        &mut self,
+        evicted_events: Vec<AuditEvent>,
+    ) {
+        if evicted_events.is_empty() {
+            return;
+        }
+        let mut changed = false;
+        for event in evicted_events {
+            if !self.known_session_ids.contains(&event.session_id) {
+                self.events.push(event);
+                changed = true;
+            }
+        }
+        if changed {
+            // Mark all newly-added session IDs as known.
+            self.known_session_ids = self.events.iter().map(|e| e.session_id.clone()).collect();
+            // Trim to keep the store bounded.
+            if self.events.len() > MAX_HISTORY_EVENTS {
+                // Sort by timestamp ascending, then drop the oldest.
+                self.events.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+                let excess = self.events.len() - MAX_HISTORY_EVENTS;
+                self.events.drain(..excess);
+                self.known_session_ids =
+                    self.events.iter().map(|e| e.session_id.clone()).collect();
+            }
+            self.save();
+        }
+    }
+
+    /// Return a clone of all persisted events.
+    pub fn events(&self) -> &[AuditEvent] {
+        &self.events
+    }
+
+    /// Remove events for sessions that match the given IDs (e.g. sessions that
+    /// became active again and will be tracked by the live cache).
+    pub fn remove_sessions(&mut self, ids: &std::collections::HashSet<String>) {
+        let before = self.events.len();
+        self.events.retain(|e| !ids.contains(&e.session_id));
+        if self.events.len() != before {
+            self.known_session_ids =
+                self.events.iter().map(|e| e.session_id.clone()).collect();
+            self.save();
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
