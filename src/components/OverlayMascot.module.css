@@ -106,7 +106,7 @@
 }
 
 .ledIdle {
-  background: #5a5a78;
+  background: #6e6e6e;
 }
 
 /* ── Status LED icons ────────────────────────────────────────────────────── */
@@ -299,7 +299,7 @@
 .alertWorkspace {
   font-size: 10px;
   font-weight: 600;
-  color: var(--color-text, #e2e2f0);
+  color: var(--color-text, #e5e5e5);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -319,7 +319,7 @@
 
 .alertTime {
   font-size: 9px;
-  color: var(--color-text-dim, #5a5a78);
+  color: var(--color-text-dim, #6e6e6e);
 }
 
 .alertClose {
@@ -330,7 +330,7 @@
   padding: 0;
   background: none;
   border: none;
-  color: var(--color-text-dim, #5a5a78);
+  color: var(--color-text-dim, #6e6e6e);
   cursor: pointer;
   border-radius: 50%;
   display: flex;
@@ -341,7 +341,7 @@
 
 .alertClose:hover {
   background: rgba(255, 255, 255, 0.1);
-  color: var(--color-text, #e2e2f0);
+  color: var(--color-text, #e5e5e5);
 }
 
 .countdownRing {
@@ -365,7 +365,7 @@
 .alertMore {
   text-align: center;
   font-size: 10px;
-  color: var(--color-text-dim, #5a5a78);
+  color: var(--color-text-dim, #6e6e6e);
   padding: 2px 0;
 }
 

@@ -910,7 +910,14 @@
     "overlay": "悬浮小助手",
     "overlay_desc": "将小助手作为悬浮窗显示在所有窗口之上",
     "auto_update_check": "自动检查更新",
-    "auto_update_check_desc": "每天自动检查一次新版本，有更新时显示通知"
+    "auto_update_check_desc": "每天自动检查一次新版本，有更新时显示通知",
+    "llm_provider": "LLM 分析引擎",
+    "llm_provider_select": "引擎",
+    "llm_fast_model": "快速模型",
+    "llm_fast_model_desc": "用于快速任务（会话状态分析）",
+    "llm_standard_model": "标准模型",
+    "llm_standard_model_desc": "用于日报摘要和经验提取",
+    "llm_disabled_warning": "会话状态分析、吉祥物台词、日报 AI 摘要和经验提取功能将被禁用。"
   },
   "connect_dialog": {
     "title": "Claw Fleet",

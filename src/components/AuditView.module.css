@@ -6,6 +6,7 @@
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  background: var(--color-bg);
 }
 
 /* ── Header bar ──────────────────────────────────────────────────────────── */

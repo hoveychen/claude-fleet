@@ -29,6 +29,9 @@ const ALL_KEYS = [
   "overlay-muted",
   "user-title",
   "auto-update-check",
+  "llm-provider",
+  "llm-model-fast",
+  "llm-model-standard",
 ] as const;
 
 /**

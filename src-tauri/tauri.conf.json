@@ -17,7 +17,8 @@
         "minWidth": 900,
         "minHeight": 600,
         "center": true,
-        "titleBarStyle": "Overlay"
+        "titleBarStyle": "Overlay",
+        "transparent": true
       },
       {
         "label": "overlay",

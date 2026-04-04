@@ -1,29 +1,11 @@
-//! Lightweight wrapper around `claude -p` for semantic analysis of agent output.
-//!
-//! Classifies the agent's last output into outcome tags (e.g. bug_fixed,
-//! needs_input, celebrating) and optionally produces a short summary when the
-//! agent is blocked waiting for user input.
+//! Semantic analysis of agent output — classifies outcome tags and produces
+//! short summaries.  Uses the [`LlmProvider`] trait so any supported CLI
+//! (Claude Code, Codex, Cursor Agent) can power the analysis.
 
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
 use std::time::Duration;
 
-/// Kill a process by PID in a cross-platform way.
-fn kill_process(pid: u32) {
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(pid as i32, libc::SIGKILL);
-    }
-    #[cfg(windows)]
-    {
-        // On Windows, use taskkill to forcefully terminate the process tree
-        let _ = Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &pid.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-}
+use crate::llm_provider::LlmProvider;
+use crate::log_debug;
 
 /// Truncate a string to at most `max` bytes on a valid UTF-8 char boundary.
 fn truncate_str(s: &str, max: usize) -> &str {
@@ -36,8 +18,6 @@ fn truncate_str(s: &str, max: usize) -> &str {
     }
     &s[..end]
 }
-
-use crate::log_debug;
 
 const ANALYSIS_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_INPUT_CHARS: usize = 1000;
@@ -140,93 +120,61 @@ fn build_prompt(last_text: &str, locale: &str, user_title: &str) -> String {
     )
 }
 
-// ── CLI resolution ──────────────────────────────────────────────────────────
-
-fn resolve_claude_path() -> Option<String> {
-    let (installed, path) = crate::check_cli_installed();
-    if installed { path } else { None }
-}
-
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /// Analyse the last assistant text and return structured outcome tags.
 ///
 /// This function blocks for up to [`ANALYSIS_TIMEOUT`] and should be called
 /// from a background thread.
-pub fn analyze_session_outcome(last_text: &str, locale: &str, session_id: &str, user_title: &str) -> Option<AnalysisResult> {
+pub fn analyze_session_outcome(
+    provider: &dyn LlmProvider,
+    model: &str,
+    last_text: &str,
+    locale: &str,
+    session_id: &str,
+    user_title: &str,
+) -> Option<AnalysisResult> {
     let sid = &session_id[..session_id.len().min(12)]; // short id for logs
-    let claude_bin = match resolve_claude_path() {
-        Some(p) => p,
-        None => {
-            log_debug(&format!("[claude_analyze] [{sid}] claude CLI not found on PATH or common locations"));
-            return None;
-        }
-    };
+
+    if !provider.is_available() {
+        log_debug(&format!(
+            "[claude_analyze] [{sid}] provider '{}' not available",
+            provider.name()
+        ));
+        return None;
+    }
 
     let truncated: String = last_text.chars().take(MAX_INPUT_CHARS).collect();
     let prompt = build_prompt(&truncated, locale, user_title);
 
-    let child = match Command::new(&claude_bin)
-        .args(["-p", &prompt, "--model", "haiku", "--no-session-persistence"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .stdin(Stdio::null())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            log_debug(&format!("[claude_analyze] [{sid}] failed to spawn claude: {e}"));
+    let raw = match provider.complete(&prompt, model, ANALYSIS_TIMEOUT) {
+        Some(r) => r,
+        None => {
+            log_debug(&format!("[claude_analyze] [{sid}] provider returned no response"));
             return None;
         }
     };
 
-    let (tx, rx) = mpsc::channel();
-    let child_id = child.id();
-    std::thread::spawn(move || {
-        let result = child.wait_with_output();
-        let _ = tx.send(result);
-    });
-
-    let output = match rx.recv_timeout(ANALYSIS_TIMEOUT) {
-        Ok(Ok(output)) if output.status.success() => output,
-        Ok(Ok(output)) => {
-            log_debug(&format!(
-                "[claude_analyze] [{sid}] claude -p exited with status {}",
-                output.status
-            ));
-            return None;
-        }
-        Ok(Err(e)) => {
-            log_debug(&format!("[claude_analyze] [{sid}] wait error: {e}"));
-            return None;
-        }
-        Err(_) => {
-            log_debug(&format!("[claude_analyze] [{sid}] timed out after {}s, killing child process (pid={})",
-                ANALYSIS_TIMEOUT.as_secs(), child_id));
-            kill_process(child_id);
-            return None;
-        }
-    };
-
-    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
     log_debug(&format!(
         "[claude_analyze] [{sid}] raw response (len={}): {:?}",
         raw.len(),
         truncate_str(&raw, 200)
     ));
 
-    if raw.is_empty() {
-        log_debug(&format!("[claude_analyze] [{sid}] empty response, returning None"));
-        return None;
-    }
-
     Some(parse_response(&raw))
 }
 
 /// Keep the old function signature as a thin wrapper for backward-compat
 /// callers (if any).
-pub fn analyze_waiting_input(last_text: &str, locale: &str, session_id: &str, user_title: &str) -> Option<String> {
-    let result = analyze_session_outcome(last_text, locale, session_id, user_title)?;
+pub fn analyze_waiting_input(
+    provider: &dyn LlmProvider,
+    model: &str,
+    last_text: &str,
+    locale: &str,
+    session_id: &str,
+    user_title: &str,
+) -> Option<String> {
+    let result = analyze_session_outcome(provider, model, last_text, locale, session_id, user_title)?;
     if result.tags.contains(&"needs_input".to_string()) {
         Some(result.summary.unwrap_or_else(|| "Waiting for input".to_string()))
     } else {
@@ -425,14 +373,17 @@ pub struct MascotQuips {
 ///
 /// Returns up to [`QUIPS_PER_GROUP`] quips for each of two groups (busy/idle).
 /// Blocks for up to [`ANALYSIS_TIMEOUT`] — call from a background thread.
-pub fn generate_mascot_quips(busy_titles: &[String], done_titles: &[String], locale: &str) -> MascotQuips {
-    let claude_bin = match resolve_claude_path() {
-        Some(p) => p,
-        None => {
-            log_debug("[mascot_quips] claude CLI not found");
-            return MascotQuips::default();
-        }
-    };
+pub fn generate_mascot_quips(
+    provider: &dyn LlmProvider,
+    model: &str,
+    busy_titles: &[String],
+    done_titles: &[String],
+    locale: &str,
+) -> MascotQuips {
+    if !provider.is_available() {
+        log_debug(&format!("[mascot_quips] provider '{}' not available", provider.name()));
+        return MascotQuips::default();
+    }
 
     if busy_titles.is_empty() && done_titles.is_empty() {
         return MascotQuips::default();
@@ -440,64 +391,24 @@ pub fn generate_mascot_quips(busy_titles: &[String], done_titles: &[String], loc
 
     let prompt = build_quip_prompt(busy_titles, done_titles, locale);
 
-    let child = match Command::new(&claude_bin)
-        .args([
-            "-p",
-            &prompt,
-            "--model",
-            "sonnet",
-            "--no-session-persistence",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .stdin(Stdio::null())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            log_debug(&format!("[mascot_quips] failed to spawn claude: {e}"));
-            return MascotQuips::default();
-        }
-    };
-
-    let (tx, rx) = mpsc::channel();
-    let child_id = child.id();
-    std::thread::spawn(move || {
-        let result = child.wait_with_output();
-        let _ = tx.send(result);
-    });
-
     // Allow up to just under the frontend refresh interval (5 min) so the
     // request has the best chance of completing before the next one fires.
     let quip_timeout = Duration::from_secs(270);
-    let output = match rx.recv_timeout(quip_timeout) {
-        Ok(Ok(output)) if output.status.success() => output,
-        Ok(Ok(output)) => {
+
+    match provider.complete(&prompt, model, quip_timeout) {
+        Some(raw) => {
             log_debug(&format!(
-                "[mascot_quips] claude -p exited with status {}",
-                output.status
+                "[mascot_quips] raw response (len={}): {:?}",
+                raw.len(),
+                truncate_str(&raw, 500)
             ));
-            return MascotQuips::default();
+            parse_quip_groups(&raw)
         }
-        Ok(Err(e)) => {
-            log_debug(&format!("[mascot_quips] wait error: {e}"));
-            return MascotQuips::default();
+        None => {
+            log_debug("[mascot_quips] provider returned no response");
+            MascotQuips::default()
         }
-        Err(_) => {
-            log_debug("[mascot_quips] timed out, killing child process");
-            kill_process(child_id);
-            return MascotQuips::default();
-        }
-    };
-
-    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    log_debug(&format!(
-        "[mascot_quips] raw response (len={}): {:?}",
-        raw.len(),
-        truncate_str(&raw, 500)
-    ));
-
-    parse_quip_groups(&raw)
+    }
 }
 
 /// Parse the two-group output from the LLM into busy/idle quip vectors.
@@ -542,8 +453,8 @@ mod tests {
     fn parse_simple_tags() {
         let r = parse_response("TAGS: bug_fixed, show_off");
         assert_eq!(r.tags, vec!["bug_fixed", "show_off"]);
-        // No summary in this response — caller should use fallback
-        assert!(r.summary.is_none());
+        // No explicit SUMMARY section → fallback uses first line as degraded summary
+        assert_eq!(r.summary.as_deref(), Some("TAGS: bug_fixed, show_off"));
     }
 
     #[test]
@@ -608,7 +519,8 @@ mod tests {
     fn parse_empty_summary_treated_as_none() {
         let r = parse_response("TAGS: needs_input | SUMMARY: ");
         assert_eq!(r.tags, vec!["needs_input"]);
-        assert!(r.summary.is_none());
+        // Empty SUMMARY section → fallback uses first line as degraded summary
+        assert_eq!(r.summary.as_deref(), Some("TAGS: needs_input | SUMMARY:"));
     }
 
     #[test]

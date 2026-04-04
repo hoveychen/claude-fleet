@@ -11,6 +11,47 @@
   position: relative;
 }
 
+/* macOS vibrancy: transparent sidebar lets native frosted glass show through */
+:global([data-platform="macos"]) .sidebar {
+  background: transparent;
+  border-right-color: rgba(255, 255, 255, 0.1);
+}
+:global([data-platform="macos"][data-theme="light"]) .sidebar {
+  border-right-color: rgba(0, 0, 0, 0.12);
+}
+
+/* Semi-transparent backgrounds for sidebar elements on macOS vibrancy */
+:global([data-platform="macos"]) .nav_item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+:global([data-platform="macos"]) .nav_active {
+  background: rgba(255, 255, 255, 0.12);
+}
+:global([data-platform="macos"]) .footer_card:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+:global([data-platform="macos"]) .separator {
+  background: rgba(255, 255, 255, 0.08);
+}
+:global([data-platform="macos"][data-theme="light"]) .nav_item:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+:global([data-platform="macos"][data-theme="light"]) .nav_active {
+  background: rgba(0, 0, 0, 0.1);
+}
+:global([data-platform="macos"][data-theme="light"]) .footer_card:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+:global([data-platform="macos"][data-theme="light"]) .separator {
+  background: rgba(0, 0, 0, 0.08);
+}
+:global([data-platform="macos"]) .footer {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+:global([data-platform="macos"][data-theme="light"]) .footer {
+  border-top-color: rgba(0, 0, 0, 0.1);
+}
+
 /* ── Header ──────────────────────────────────────────────────────────────── */
 
 .header {

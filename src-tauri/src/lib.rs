@@ -8,6 +8,7 @@ pub mod codex_source;
 pub mod cursor;
 pub mod daily_report;
 pub mod hooks;
+pub mod llm_provider;
 pub mod local_backend;
 pub mod memory;
 pub mod openclaw_source;
@@ -772,6 +773,10 @@ pub struct AppState {
     /// Timestamp when the tray panel was last shown.  Used to ignore the
     /// spurious focus-lost event that macOS fires when a tray click finishes.
     pub tray_panel_shown_at: Arc<Mutex<std::time::Instant>>,
+    /// LLM provider config (which CLI + models to use for analysis/reports).
+    pub llm_config: Arc<Mutex<llm_provider::LlmConfig>>,
+    /// Cached LLM provider info — pre-fetched at startup so Settings opens instantly.
+    pub cached_llm_providers: Arc<Mutex<Vec<llm_provider::LlmProviderInfo>>>,
 }
 
 // ── Tauri commands ───────────────────────────────────────────────────────────
@@ -1216,12 +1221,43 @@ fn get_waiting_alerts(state: tauri::State<AppState>) -> Vec<backend::WaitingAler
 // ── Mascot quip generation ──────────────────────────────────────────────────
 
 #[tauri::command]
-async fn generate_mascot_quips(busy_titles: Vec<String>, done_titles: Vec<String>, locale: String) -> claude_analyze::MascotQuips {
-    tokio::task::spawn_blocking(move || {
-        claude_analyze::generate_mascot_quips(&busy_titles, &done_titles, &locale)
+async fn generate_mascot_quips(
+    state: tauri::State<'_, AppState>,
+    busy_titles: Vec<String>,
+    done_titles: Vec<String>,
+    locale: String,
+) -> Result<claude_analyze::MascotQuips, String> {
+    let cfg = state.llm_config.lock().unwrap().clone();
+    Ok(tokio::task::spawn_blocking(move || {
+        let provider = llm_provider::resolve_provider(&cfg.provider);
+        match provider {
+            Some(p) => claude_analyze::generate_mascot_quips(
+                p.as_ref(), &cfg.standard_model, &busy_titles, &done_titles, &locale,
+            ),
+            None => claude_analyze::MascotQuips::default(),
+        }
     })
     .await
-    .unwrap_or_default()
+    .unwrap_or_default())
+}
+
+// ── LLM provider commands ──────────────────────────────────────────────────
+
+#[tauri::command]
+fn list_llm_providers(state: tauri::State<AppState>) -> Vec<llm_provider::LlmProviderInfo> {
+    state.cached_llm_providers.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn get_llm_config(state: tauri::State<AppState>) -> llm_provider::LlmConfig {
+    state.backend.read().unwrap().get_llm_config()
+}
+
+#[tauri::command]
+fn set_llm_config(state: tauri::State<AppState>, config: llm_provider::LlmConfig) -> Result<(), String> {
+    // Update both AppState (for background threads) and Backend.
+    *state.llm_config.lock().unwrap() = config.clone();
+    state.backend.read().unwrap().set_llm_config(config)
 }
 
 // ── Overlay window commands ──────────────────────────────────────────────────
@@ -1612,6 +1648,8 @@ pub fn run() {
             tray_last_click: Arc::new(Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(600))),
             tray_rebuild_pending: Arc::new(Mutex::new(false)),
             tray_panel_shown_at: Arc::new(Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(600))),
+            llm_config: Arc::new(Mutex::new(llm_provider::LlmConfig::default())),
+            cached_llm_providers: Arc::new(Mutex::new(Vec::new())),
         })
         .setup(move |app| {
             // Replace NullBackend with the real LocalBackend now that AppHandle
@@ -1619,6 +1657,7 @@ pub fn run() {
             {
                 let state = app.state::<AppState>();
                 let locale = state.locale.clone();
+                let llm_cfg = state.llm_config.clone();
 
                 // Build the agent source registry from config (~/.claude/fleet-sources.json).
                 let sources = agent_source::build_sources();
@@ -1626,9 +1665,17 @@ pub fn run() {
                 let local = local_backend::LocalBackend::new(
                     app.handle().clone(),
                     locale,
+                    llm_cfg,
                     sources,
                 );
                 *state.backend.write().unwrap() = Box::new(local);
+
+                // Pre-fetch LLM provider info in background so Settings opens instantly.
+                let cached = state.cached_llm_providers.clone();
+                std::thread::spawn(move || {
+                    let infos = llm_provider::all_provider_infos();
+                    *cached.lock().unwrap() = infos;
+                });
             }
 
             // Truncate the hook events file if it has grown too large.
@@ -1776,6 +1823,21 @@ pub fn run() {
                 });
             }
 
+            // ── macOS vibrancy (frosted glass sidebar) ────────────────────
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::window::{Color, Effect, EffectState, EffectsBuilder};
+                if let Some(main_win) = app.get_webview_window("main") {
+                    // Transparent webview background so native vibrancy shows through
+                    let _ = main_win.set_background_color(Some(Color(0, 0, 0, 0)));
+                    let effects = EffectsBuilder::new()
+                        .effect(Effect::Sidebar)
+                        .state(EffectState::Active)
+                        .build();
+                    let _ = main_win.set_effects(effects);
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1820,6 +1882,9 @@ pub fn run() {
             apply_hooks_setup,
             remove_hooks,
             generate_mascot_quips,
+            list_llm_providers,
+            get_llm_config,
+            set_llm_config,
             get_sources_config,
             set_source_enabled,
             restart_app,

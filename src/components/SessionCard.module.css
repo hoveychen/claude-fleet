@@ -307,3 +307,41 @@
   background: var(--badge-executing-bg);
   color: var(--badge-executing-fg);
 }
+
+/* macOS vibrancy: semi-transparent card backgrounds in sidebar */
+:global([data-platform="macos"]) .card {
+  background: rgba(255, 255, 255, 0.04);
+}
+:global([data-platform="macos"]) .card:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+:global([data-platform="macos"]) .card.selected {
+  background: rgba(255, 255, 255, 0.1);
+}
+:global([data-platform="macos"]) .tag_ide,
+:global([data-platform="macos"]) .tag_model,
+:global([data-platform="macos"]) .tag_source {
+  background: rgba(255, 255, 255, 0.08);
+}
+:global([data-platform="macos"]) .badge_idle {
+  background: rgba(255, 255, 255, 0.08);
+}
+:global([data-platform="macos"][data-theme="light"]) .card {
+  background: rgba(255, 255, 255, 0.3);
+}
+:global([data-platform="macos"][data-theme="light"]) .card:hover {
+  background: rgba(255, 255, 255, 0.5);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+:global([data-platform="macos"][data-theme="light"]) .card.selected {
+  background: rgba(255, 255, 255, 0.6);
+}
+:global([data-platform="macos"][data-theme="light"]) .tag_ide,
+:global([data-platform="macos"][data-theme="light"]) .tag_model,
+:global([data-platform="macos"][data-theme="light"]) .tag_source {
+  background: rgba(0, 0, 0, 0.06);
+}
+:global([data-platform="macos"][data-theme="light"]) .badge_idle {
+  background: rgba(0, 0, 0, 0.06);
+}

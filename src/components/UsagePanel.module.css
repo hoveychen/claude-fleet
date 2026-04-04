@@ -251,3 +251,17 @@
 .retry:hover {
   background: rgba(248, 113, 113, 0.1);
 }
+
+/* macOS vibrancy: semi-transparent backgrounds */
+:global([data-platform="macos"]) .tool_section {
+  background: rgba(255, 255, 255, 0.06);
+}
+:global([data-platform="macos"]) .bar_track {
+  background: rgba(0, 0, 0, 0.2);
+}
+:global([data-platform="macos"][data-theme="light"]) .tool_section {
+  background: rgba(0, 0, 0, 0.04);
+}
+:global([data-platform="macos"][data-theme="light"]) .bar_track {
+  background: rgba(0, 0, 0, 0.06);
+}

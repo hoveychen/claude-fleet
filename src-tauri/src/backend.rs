@@ -12,6 +12,7 @@ use serde_json::Value;
 use crate::account::AccountInfo;
 use crate::audit::AuditSummary;
 use crate::daily_report::{DailyReport, DailyReportStats, Lesson};
+use crate::llm_provider::{LlmConfig, LlmProviderInfo};
 use crate::memory::{MemoryHistoryEntry, WorkspaceMemory};
 use crate::search_index::SearchHit;
 use crate::session::SessionInfo;
@@ -268,6 +269,11 @@ pub trait Backend: Send + Sync {
     fn generate_daily_report_ai_summary(&self, date: &str) -> Result<String, String>;
     fn generate_daily_report_lessons(&self, date: &str) -> Result<Vec<Lesson>, String>;
     fn append_lesson_to_claude_md(&self, lesson: &Lesson) -> Result<(), String>;
+
+    // ── LLM provider ────────────────────────────────────────────────────────
+    fn list_llm_providers(&self) -> Vec<LlmProviderInfo>;
+    fn get_llm_config(&self) -> LlmConfig;
+    fn set_llm_config(&self, config: LlmConfig) -> Result<(), String>;
 }
 
 // ── Shared watch state ───────────────────────────────────────────────────────
@@ -407,6 +413,15 @@ impl Backend for NullBackend {
         Err("backend not ready".into())
     }
     fn append_lesson_to_claude_md(&self, _: &Lesson) -> Result<(), String> {
+        Err("backend not ready".into())
+    }
+    fn list_llm_providers(&self) -> Vec<LlmProviderInfo> {
+        vec![]
+    }
+    fn get_llm_config(&self) -> LlmConfig {
+        LlmConfig::default()
+    }
+    fn set_llm_config(&self, _: LlmConfig) -> Result<(), String> {
         Err("backend not ready".into())
     }
 }

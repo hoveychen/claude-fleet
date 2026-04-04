@@ -3,14 +3,13 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
 use std::time::Duration;
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::llm_provider::LlmProvider;
 use crate::log_debug;
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -633,22 +632,6 @@ pub fn generate_report_from_sessions(
 
 const AI_SUMMARY_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Kill a process by PID (cross-platform).
-fn kill_process(pid: u32) {
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(pid as i32, libc::SIGKILL);
-    }
-    #[cfg(windows)]
-    {
-        let _ = Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &pid.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-}
-
 fn build_summary_prompt(report: &DailyReport, locale: &str) -> String {
     let lang_instruction = match locale {
         "zh" => "请用中文撰写。",
@@ -726,70 +709,22 @@ fn build_summary_prompt(report: &DailyReport, locale: &str) -> String {
 
 /// Generate AI summary for a daily report using `claude -p --model sonnet`.
 /// Blocks for up to 120 seconds. Call from a background thread.
-pub fn generate_ai_summary(report: &DailyReport, locale: &str) -> Option<String> {
-    let (installed, path) = crate::check_cli_installed();
-    let claude_bin = match (installed, path) {
-        (true, Some(p)) => p,
-        _ => {
-            log_debug("[daily_report] claude CLI not found");
-            return None;
-        }
-    };
-
-    let prompt = build_summary_prompt(report, locale);
-
-    let child = match Command::new(&claude_bin)
-        .args(["-p", &prompt, "--model", "sonnet", "--no-session-persistence"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .stdin(Stdio::null())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            log_debug(&format!("[daily_report] failed to spawn claude: {e}"));
-            return None;
-        }
-    };
-
-    let (tx, rx) = mpsc::channel();
-    let child_id = child.id();
-    std::thread::spawn(move || {
-        let result = child.wait_with_output();
-        let _ = tx.send(result);
-    });
-
-    let output = match rx.recv_timeout(AI_SUMMARY_TIMEOUT) {
-        Ok(Ok(output)) if output.status.success() => output,
-        Ok(Ok(output)) => {
-            log_debug(&format!(
-                "[daily_report] claude -p exited with status {}",
-                output.status
-            ));
-            return None;
-        }
-        Ok(Err(e)) => {
-            log_debug(&format!("[daily_report] wait error: {e}"));
-            return None;
-        }
-        Err(_) => {
-            log_debug(&format!(
-                "[daily_report] timed out after {}s, killing child process (pid={})",
-                AI_SUMMARY_TIMEOUT.as_secs(),
-                child_id
-            ));
-            kill_process(child_id);
-            return None;
-        }
-    };
-
-    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if raw.is_empty() {
-        log_debug("[daily_report] empty response from claude");
+pub fn generate_ai_summary(
+    provider: &dyn LlmProvider,
+    model: &str,
+    report: &DailyReport,
+    locale: &str,
+) -> Option<String> {
+    if !provider.is_available() {
+        log_debug(&format!(
+            "[daily_report] provider '{}' not available",
+            provider.name()
+        ));
         return None;
     }
 
-    Some(raw)
+    let prompt = build_summary_prompt(report, locale);
+    provider.complete(&prompt, model, AI_SUMMARY_TIMEOUT)
 }
 
 // ── Lessons extraction ───────────────────────────────────────────────────────
@@ -1018,15 +953,19 @@ fn parse_lessons(output: &str, pairs: &[ConversationPair]) -> Vec<Lesson> {
 
 /// Generate lessons for a daily report from its session JSONL files.
 /// Returns None if claude CLI is unavailable or no conversation pairs found.
-pub fn generate_lessons(report: &DailyReport, locale: &str) -> Option<Vec<Lesson>> {
-    let (installed, path) = crate::check_cli_installed();
-    let claude_bin = match (installed, path) {
-        (true, Some(p)) => p,
-        _ => {
-            log_debug("[daily_report] claude CLI not found for lessons");
-            return None;
-        }
-    };
+pub fn generate_lessons(
+    provider: &dyn LlmProvider,
+    model: &str,
+    report: &DailyReport,
+    locale: &str,
+) -> Option<Vec<Lesson>> {
+    if !provider.is_available() {
+        log_debug(&format!(
+            "[daily_report] provider '{}' not available for lessons",
+            provider.name()
+        ));
+        return None;
+    }
 
     // Collect conversation pairs from all non-subagent sessions
     let mut all_pairs: Vec<ConversationPair> = Vec::new();
@@ -1063,52 +1002,11 @@ pub fn generate_lessons(report: &DailyReport, locale: &str) -> Option<Vec<Lesson
 
     let prompt = build_lessons_prompt(&all_pairs, locale, &existing_rules);
 
-    let child = match Command::new(&claude_bin)
-        .args(["-p", &prompt, "--model", "sonnet", "--no-session-persistence"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .stdin(Stdio::null())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            log_debug(&format!("[daily_report] failed to spawn claude for lessons: {e}"));
-            return None;
-        }
+    let raw = match provider.complete(&prompt, model, LESSONS_TIMEOUT) {
+        Some(r) => r,
+        None => return None,
     };
 
-    let (tx, rx) = mpsc::channel();
-    let child_id = child.id();
-    std::thread::spawn(move || {
-        let result = child.wait_with_output();
-        let _ = tx.send(result);
-    });
-
-    let output = match rx.recv_timeout(LESSONS_TIMEOUT) {
-        Ok(Ok(output)) if output.status.success() => output,
-        Ok(Ok(output)) => {
-            log_debug(&format!(
-                "[daily_report] claude -p (lessons) exited with status {}",
-                output.status
-            ));
-            return None;
-        }
-        Ok(Err(e)) => {
-            log_debug(&format!("[daily_report] wait error (lessons): {e}"));
-            return None;
-        }
-        Err(_) => {
-            log_debug(&format!(
-                "[daily_report] lessons timed out after {}s, killing (pid={})",
-                LESSONS_TIMEOUT.as_secs(),
-                child_id
-            ));
-            kill_process(child_id);
-            return None;
-        }
-    };
-
-    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if raw.is_empty() || raw.eq_ignore_ascii_case("NONE") {
         return Some(vec![]);
     }
@@ -1312,6 +1210,7 @@ fn make_session_info_for_date(
 pub fn start_report_scheduler(
     report_store: std::sync::Arc<std::sync::Mutex<ReportStore>>,
     locale: std::sync::Arc<std::sync::Mutex<String>>,
+    llm_config: std::sync::Arc<std::sync::Mutex<crate::llm_provider::LlmConfig>>,
 ) {
     std::thread::Builder::new()
         .name("report-scheduler".into())
@@ -1322,8 +1221,9 @@ pub fn start_report_scheduler(
             loop {
                 let lang = locale.lock().unwrap().clone();
                 let rs = report_store.clone();
+                let cfg = llm_config.lock().unwrap().clone();
                 match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run_backfill_check(&rs, &lang);
+                    run_backfill_check(&rs, &lang, &cfg);
                 })) {
                     Ok(()) => {}
                     Err(e) => {
@@ -1369,6 +1269,7 @@ fn lock_store(
 fn run_backfill_check(
     report_store: &std::sync::Arc<std::sync::Mutex<ReportStore>>,
     locale: &str,
+    llm_config: &crate::llm_provider::LlmConfig,
 ) {
     let today = chrono::Local::now();
     log_debug("[report-scheduler] backfill pass started");
@@ -1451,9 +1352,18 @@ fn run_backfill_check(
 
         let mut any_failed = false;
 
+        let provider = crate::llm_provider::resolve_provider(&llm_config.provider);
+        let Some(provider) = provider else {
+            log_debug(&format!(
+                "[report-scheduler] unknown provider '{}', skipping AI",
+                llm_config.provider
+            ));
+            break;
+        };
+
         if report.ai_summary.is_none() {
             log_debug(&format!("[report-scheduler] generating AI summary for {date}..."));
-            if let Some(summary) = generate_ai_summary(&report, locale) {
+            if let Some(summary) = generate_ai_summary(provider.as_ref(), &llm_config.standard_model, &report, locale) {
                 let store = lock_store(report_store);
                 store.update_ai_summary(&date, &summary).ok();
                 log_debug(&format!("[report-scheduler] AI summary for {date} done"));
@@ -1464,7 +1374,7 @@ fn run_backfill_check(
         }
         if report.lessons.is_none() {
             log_debug(&format!("[report-scheduler] generating lessons for {date}..."));
-            if let Some(lessons) = generate_lessons(&report, locale) {
+            if let Some(lessons) = generate_lessons(provider.as_ref(), &llm_config.standard_model, &report, locale) {
                 let store = lock_store(report_store);
                 store.update_lessons(&date, &lessons).ok();
                 log_debug(&format!(

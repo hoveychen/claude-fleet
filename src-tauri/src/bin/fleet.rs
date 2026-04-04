@@ -1161,6 +1161,7 @@ fn cmd_serve(port: u16, token: String) {
         ReportStore, generate_report_from_sessions, scan_sessions_for_date, generate_ai_summary,
         generate_lessons, append_lesson_to_claude_md, Lesson,
     };
+    use claw_fleet_lib::llm_provider::{self, LlmConfig};
 
     let sources = build_sources();
 
@@ -1168,6 +1169,9 @@ fn cmd_serve(port: u16, token: String) {
     let report_store = Arc::new(Mutex::new(
         ReportStore::open().expect("report store open"),
     ));
+
+    // LLM provider config — defaults to Claude, updated via /llm/config endpoint.
+    let llm_config: Arc<Mutex<LlmConfig>> = Arc::new(Mutex::new(LlmConfig::default()));
 
     // Load the persistent audit history.
     let audit_history = Arc::new(Mutex::new(
@@ -1790,7 +1794,12 @@ fn cmd_serve(port: u16, token: String) {
                 match store.get_report(&date) {
                     Ok(Some(report)) => {
                         drop(store);
-                        match generate_ai_summary(&report, lang) {
+                        let cfg = llm_config.lock().unwrap().clone();
+                        let provider = llm_provider::resolve_provider(&cfg.provider);
+                        let result = provider.as_ref().and_then(|p| {
+                            generate_ai_summary(p.as_ref(), &cfg.standard_model, &report, lang)
+                        });
+                        match result {
                             Some(summary) => {
                                 report_store
                                     .lock()
@@ -1831,7 +1840,12 @@ fn cmd_serve(port: u16, token: String) {
                 match store.get_report(&date) {
                     Ok(Some(report)) => {
                         drop(store);
-                        match generate_lessons(&report, lang) {
+                        let cfg = llm_config.lock().unwrap().clone();
+                        let provider = llm_provider::resolve_provider(&cfg.provider);
+                        let result = provider.as_ref().and_then(|p| {
+                            generate_lessons(p.as_ref(), &cfg.standard_model, &report, lang)
+                        });
+                        match result {
                             Some(lessons) => {
                                 report_store
                                     .lock()
@@ -1887,6 +1901,45 @@ fn cmd_serve(port: u16, token: String) {
                     },
                     Err(e) => {
                         let body = format!(r#"{{"error":"invalid lesson: {}"}}"#, e.to_string().replace('"', "'"));
+                        let _ = request.respond(
+                            tiny_http::Response::from_string(body)
+                                .with_status_code(400)
+                                .with_header(json_header),
+                        );
+                    }
+                }
+            }
+
+            // ── LLM provider endpoints ──────────────────────────────────
+            "/llm/providers" => {
+                let infos = llm_provider::all_provider_infos();
+                let body = serde_json::to_string(&infos).unwrap_or_default();
+                let _ = request.respond(
+                    tiny_http::Response::from_string(body).with_header(json_header),
+                );
+            }
+
+            "/llm/config" if request.method() == &tiny_http::Method::Get => {
+                let cfg = llm_config.lock().unwrap().clone();
+                let body = serde_json::to_string(&cfg).unwrap_or_default();
+                let _ = request.respond(
+                    tiny_http::Response::from_string(body).with_header(json_header),
+                );
+            }
+
+            "/llm/config" => {
+                // POST: update config
+                let mut body_bytes = Vec::new();
+                let _ = std::io::Read::read_to_end(&mut request.as_reader(), &mut body_bytes);
+                match serde_json::from_slice::<LlmConfig>(&body_bytes) {
+                    Ok(new_cfg) => {
+                        *llm_config.lock().unwrap() = new_cfg;
+                        let _ = request.respond(
+                            tiny_http::Response::from_string("{}").with_header(json_header),
+                        );
+                    }
+                    Err(e) => {
+                        let body = format!(r#"{{"error":"invalid config: {}"}}"#, e.to_string().replace('"', "'"));
                         let _ = request.respond(
                             tiny_http::Response::from_string(body)
                                 .with_status_code(400)
@@ -2042,6 +2095,10 @@ fn cmd_report(date: Option<String>, backfill: bool, regenerate: bool, gen_lesson
         ReportStore, generate_report_from_sessions, scan_sessions_for_date,
         generate_lessons, generate_ai_summary,
     };
+    use claw_fleet_lib::llm_provider::{self, LlmConfig};
+    let llm_cfg = LlmConfig::default();
+    let llm_prov = llm_provider::resolve_provider(&llm_cfg.provider)
+        .expect("default LLM provider not available");
 
     let store = ReportStore::open().expect("cannot open report store");
 
@@ -2096,7 +2153,7 @@ fn cmd_report(date: Option<String>, backfill: bool, regenerate: bool, gen_lesson
         match store.get_report(&target_date) {
             Ok(Some(report)) => {
                 eprint!("Generating AI summary (may take up to 2 minutes)...");
-                match generate_ai_summary(&report, lang) {
+                match generate_ai_summary(llm_prov.as_ref(), &llm_cfg.standard_model, &report, lang) {
                     Some(summary) => {
                         eprintln!(" done");
                         store.update_ai_summary(&target_date, &summary).ok();
@@ -2125,7 +2182,7 @@ fn cmd_report(date: Option<String>, backfill: bool, regenerate: bool, gen_lesson
         match store.get_report(&target_date) {
             Ok(Some(report)) => {
                 eprint!("Generating lessons (may take up to 3 minutes)...");
-                match generate_lessons(&report, lang) {
+                match generate_lessons(llm_prov.as_ref(), &llm_cfg.standard_model, &report, lang) {
                     Some(lessons) => {
                         eprintln!(" done ({} lessons found)", lessons.len());
                         store.update_lessons(&target_date, &lessons).ok();

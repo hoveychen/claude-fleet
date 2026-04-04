@@ -910,7 +910,14 @@
     "overlay": "Floating assistant",
     "overlay_desc": "Show the assistant as a floating overlay on top of all windows",
     "auto_update_check": "Automatic update check",
-    "auto_update_check_desc": "Check for new versions once a day and show a notification when an update is available"
+    "auto_update_check_desc": "Check for new versions once a day and show a notification when an update is available",
+    "llm_provider": "LLM Provider",
+    "llm_provider_select": "Provider",
+    "llm_fast_model": "Fast model",
+    "llm_fast_model_desc": "Used for quick tasks (outcome analysis)",
+    "llm_standard_model": "Standard model",
+    "llm_standard_model_desc": "Used for reports and lesson extraction",
+    "llm_disabled_warning": "Session outcome analysis, mascot quips, daily report AI summaries, and lesson extraction will be disabled."
   },
   "connect_dialog": {
     "title": "Claw Fleet",

@@ -556,3 +556,17 @@
 .stats_table tr:not(:last-child) td {
   border-bottom: 1px solid var(--color-border);
 }
+
+/* macOS vibrancy: semi-transparent backgrounds */
+:global([data-platform="macos"]) .container {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+:global([data-platform="macos"]) .bar_track {
+  background: rgba(0, 0, 0, 0.2);
+}
+:global([data-platform="macos"][data-theme="light"]) .container {
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+:global([data-platform="macos"][data-theme="light"]) .bar_track {
+  background: rgba(0, 0, 0, 0.06);
+}

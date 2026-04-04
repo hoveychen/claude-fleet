@@ -23,6 +23,26 @@ interface SourceInfo {
   available: boolean;
 }
 
+interface LlmModel {
+  id: string;
+  displayName: string;
+}
+
+interface LlmProviderInfo {
+  name: string;
+  displayName: string;
+  available: boolean;
+  models: LlmModel[];
+  defaultFastModel: string;
+  defaultStandardModel: string;
+}
+
+interface LlmConfig {
+  provider: string;
+  fastModel: string;
+  standardModel: string;
+}
+
 type NotificationMode = "all" | "user_action" | "none";
 type TtsMode = "chime_and_speech" | "chime_only" | "off";
 type SettingsTab = "general" | "appearance" | "profile" | "connection" | "notifications" | "sound";
@@ -204,6 +224,45 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
     setItem("auto-update-check", enabled ? "true" : "false");
   }, []);
 
+  // ── LLM provider state ──────────────────────────────────────────────────
+  const [llmProviders, setLlmProviders] = useState<LlmProviderInfo[]>([]);
+  const [llmConfig, setLlmConfigState] = useState<LlmConfig>(() => ({
+    provider: getItem("llm-provider") || "claude",
+    fastModel: getItem("llm-model-fast") || "haiku",
+    standardModel: getItem("llm-model-standard") || "sonnet",
+  }));
+
+  useEffect(() => {
+    invoke<LlmProviderInfo[]>("list_llm_providers").then(setLlmProviders).catch(() => {});
+    invoke<LlmConfig>("get_llm_config").then((cfg) => {
+      setLlmConfigState(cfg);
+      setItem("llm-provider", cfg.provider);
+      setItem("llm-model-fast", cfg.fastModel);
+      setItem("llm-model-standard", cfg.standardModel);
+    }).catch(() => {});
+  }, []);
+
+  const handleLlmConfigChange = useCallback((patch: Partial<LlmConfig>) => {
+    setLlmConfigState((prev) => {
+      const next = { ...prev, ...patch };
+      // When provider changes, reset models to that provider's defaults
+      if (patch.provider && patch.provider !== prev.provider) {
+        const info = llmProviders.find((p) => p.name === patch.provider);
+        if (info) {
+          next.fastModel = info.defaultFastModel;
+          next.standardModel = info.defaultStandardModel;
+        }
+      }
+      setItem("llm-provider", next.provider);
+      setItem("llm-model-fast", next.fastModel);
+      setItem("llm-model-standard", next.standardModel);
+      invoke("set_llm_config", { config: next }).catch(() => {});
+      return next;
+    });
+  }, [llmProviders]);
+
+  const currentProviderInfo = llmProviders.find((p) => p.name === llmConfig.provider);
+
   // ── Overlay state (shared via store) ─────────────────────────────────────
   const overlayEnabled = useOverlayStore((s) => s.enabled);
   const setOverlayEnabled = useOverlayStore((s) => s.setEnabled);
@@ -293,6 +352,73 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                     <span className={styles.toggle_slider} />
                   </label>
                 </div>
+
+                {/* ── LLM Provider ── */}
+                <div className={styles.section_title} style={{ marginTop: 18 }}>
+                  {t("settings.llm_provider")}
+                </div>
+                <div className={styles.row}>
+                  <span className={styles.row_label}>{t("settings.llm_provider_select")}</span>
+                  <select
+                    className={styles.select}
+                    style={{ flex: "none", width: 180 }}
+                    value={llmConfig.provider}
+                    onChange={(e) => handleLlmConfigChange({ provider: e.target.value })}
+                  >
+                    {llmProviders.map((p) => (
+                      <option key={p.name} value={p.name} disabled={!p.available}>
+                        {p.displayName}{!p.available ? ` (${t("settings.source_not_detected")})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {llmConfig.provider === "none" && (
+                  <div className={styles.row}>
+                    <span className={styles.row_label} style={{ fontSize: 11, color: "var(--color-warning, #e8a838)" }}>
+                      {t("settings.llm_disabled_warning")}
+                    </span>
+                  </div>
+                )}
+                {currentProviderInfo && currentProviderInfo.models.length > 0 && (
+                  <>
+                    <div className={styles.row}>
+                      <div>
+                        <span className={styles.row_label}>{t("settings.llm_fast_model")}</span>
+                        <span className={styles.row_label} style={{ fontSize: 11, color: "var(--color-text-dim)", display: "block", marginTop: 2 }}>
+                          {t("settings.llm_fast_model_desc")}
+                        </span>
+                      </div>
+                      <select
+                        className={styles.select}
+                        style={{ flex: "none", width: 180 }}
+                        value={llmConfig.fastModel}
+                        onChange={(e) => handleLlmConfigChange({ fastModel: e.target.value })}
+                      >
+                        {currentProviderInfo.models.map((m) => (
+                          <option key={m.id} value={m.id}>{m.displayName}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className={styles.row}>
+                      <div>
+                        <span className={styles.row_label}>{t("settings.llm_standard_model")}</span>
+                        <span className={styles.row_label} style={{ fontSize: 11, color: "var(--color-text-dim)", display: "block", marginTop: 2 }}>
+                          {t("settings.llm_standard_model_desc")}
+                        </span>
+                      </div>
+                      <select
+                        className={styles.select}
+                        style={{ flex: "none", width: 180 }}
+                        value={llmConfig.standardModel}
+                        onChange={(e) => handleLlmConfigChange({ standardModel: e.target.value })}
+                      >
+                        {currentProviderInfo.models.map((m) => (
+                          <option key={m.id} value={m.id}>{m.displayName}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 

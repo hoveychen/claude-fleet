@@ -389,6 +389,18 @@ impl crate::backend::Backend for RemoteBackend {
     fn append_lesson_to_claude_md(&self, lesson: &crate::daily_report::Lesson) -> Result<(), String> {
         self.probe.post_json_ok("/daily_report/append_lesson", lesson)
     }
+
+    fn list_llm_providers(&self) -> Vec<crate::llm_provider::LlmProviderInfo> {
+        self.probe.get("/llm/providers").unwrap_or_default()
+    }
+
+    fn get_llm_config(&self) -> crate::llm_provider::LlmConfig {
+        self.probe.get("/llm/config").unwrap_or_default()
+    }
+
+    fn set_llm_config(&self, config: crate::llm_provider::LlmConfig) -> Result<(), String> {
+        self.probe.post_json_ok("/llm/config", &config)
+    }
 }
 
 // ── Progress event emitted to the frontend during connect ────────────────────
@@ -907,6 +919,10 @@ fn connect_remote_start_probe(
             .try_state::<crate::AppState>()
             .map(|s| s.locale.lock().unwrap().clone())
             .unwrap_or_else(|| "en".to_string());
+        let llm_config = app
+            .try_state::<crate::AppState>()
+            .map(|s| s.llm_config.lock().unwrap().clone())
+            .unwrap_or_default();
 
         std::thread::spawn(move || {
             use std::collections::{HashMap, HashSet};
@@ -975,11 +991,15 @@ fn connect_remote_start_probe(
                         let lang = locale.clone();
                         let title = crate::local_backend::get_user_title(&app_bg);
                         let jsonl_path = sess.jsonl_path.clone();
+                        let cfg = llm_config.clone();
 
                         std::thread::spawn(move || {
-                            let result = crate::claude_analyze::analyze_session_outcome(
-                                &last_text, &lang, &session_id, &title,
-                            );
+                            let provider = crate::llm_provider::resolve_provider(&cfg.provider);
+                            let result = provider.as_ref().and_then(|p| {
+                                crate::claude_analyze::analyze_session_outcome(
+                                    p.as_ref(), &cfg.fast_model, &last_text, &lang, &session_id, &title,
+                                )
+                            });
                             an.lock().unwrap().remove(&session_id);
 
                             if let Some(ref result) = result {
@@ -1134,8 +1154,9 @@ pub fn disconnect_remote(
     // Construct the new LocalBackend first (triggers initial local scan and
     // emits sessions-updated) before dropping the RemoteBackend.
     let locale = state.locale.clone();
+    let llm_config = state.llm_config.clone();
     let sources = crate::agent_source::build_sources();
-    let new_backend = crate::local_backend::LocalBackend::new(app, locale, sources);
+    let new_backend = crate::local_backend::LocalBackend::new(app, locale, llm_config, sources);
     // Swap: drop old backend (RemoteBackend::Drop kills tunnel + remote probe)
     // outside the lock so the SSH cleanup doesn't block other commands.
     let old = {

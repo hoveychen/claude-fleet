@@ -57,6 +57,8 @@ pub struct LocalBackend {
     report_store: Arc<Mutex<crate::daily_report::ReportStore>>,
     /// User's UI locale (e.g. "en", "zh").
     locale: Arc<Mutex<String>>,
+    /// LLM provider configuration (which CLI + models to use for analysis).
+    llm_config: Arc<Mutex<crate::llm_provider::LlmConfig>>,
     /// Kept alive so the watcher thread keeps running.
     /// Dropping this field closes the event channel and the thread exits.
     _watcher: RecommendedWatcher,
@@ -66,6 +68,7 @@ impl LocalBackend {
     pub fn new(
         app: AppHandle,
         locale: Arc<Mutex<String>>,
+        llm_config: Arc<Mutex<crate::llm_provider::LlmConfig>>,
         sources: Vec<Box<dyn AgentSource>>,
     ) -> Self {
         let _t0 = std::time::Instant::now();
@@ -208,6 +211,7 @@ impl LocalBackend {
         let wa2 = waiting_alerts.clone();
         let so2 = session_outcomes.clone();
         let locale2 = locale.clone();
+        let llm_config2 = llm_config.clone();
         let watch2 = watch.clone();
         let analyzing2 = analyzing.clone();
         let idx_tx2 = index_tx.clone();
@@ -314,6 +318,7 @@ impl LocalBackend {
                         &so2,
                         &app2,
                         &locale2,
+                        &llm_config2,
                     );
                     detect_audit_critical_notifications(
                         &sess2, &sources2, &ac2, &nak2, &app2,
@@ -343,6 +348,7 @@ impl LocalBackend {
             let wa3 = waiting_alerts.clone();
             let so3 = session_outcomes.clone();
             let locale3 = locale.clone();
+            let llm_config3 = llm_config.clone();
             let analyzing3 = analyzing.clone();
             let idx_tx3 = index_tx.clone();
             let ac3 = audit_cache.clone();
@@ -383,6 +389,7 @@ impl LocalBackend {
                         &so3,
                         &app3,
                         &locale3,
+                        &llm_config3,
                     );
                     detect_audit_critical_notifications(
                         &sess3, &sources3, &ac3, &nak3, &app3,
@@ -394,7 +401,7 @@ impl LocalBackend {
         }
 
         // Start the daily report scheduler (backfills missing reports in background).
-        crate::daily_report::start_report_scheduler(report_store.clone(), locale.clone());
+        crate::daily_report::start_report_scheduler(report_store.clone(), locale.clone(), llm_config.clone());
 
         step!("threads spawned, constructing result");
 
@@ -412,6 +419,7 @@ impl LocalBackend {
             index_tx,
             report_store,
             locale,
+            llm_config,
             _watcher: watcher,
         };
         step!("LocalBackend::new() complete");
@@ -1062,8 +1070,12 @@ impl Backend for LocalBackend {
             .ok_or_else(|| format!("No report found for {date}"))?;
 
         let lang = self.locale.lock().unwrap().clone();
-        let summary = crate::daily_report::generate_ai_summary(&report, &lang)
-            .ok_or_else(|| "AI summary generation failed".to_string())?;
+        let cfg = self.llm_config.lock().unwrap().clone();
+        let provider = crate::llm_provider::resolve_provider(&cfg.provider)
+            .ok_or_else(|| format!("unknown LLM provider '{}'", cfg.provider))?;
+        let summary = crate::daily_report::generate_ai_summary(
+            provider.as_ref(), &cfg.standard_model, &report, &lang,
+        ).ok_or_else(|| "AI summary generation failed".to_string())?;
 
         self.report_store
             .lock()
@@ -1084,8 +1096,12 @@ impl Backend for LocalBackend {
             .ok_or_else(|| format!("No report found for {date}"))?;
 
         let lang = self.locale.lock().unwrap().clone();
-        let lessons = crate::daily_report::generate_lessons(&report, &lang)
-            .ok_or_else(|| "Lessons generation failed".to_string())?;
+        let cfg = self.llm_config.lock().unwrap().clone();
+        let provider = crate::llm_provider::resolve_provider(&cfg.provider)
+            .ok_or_else(|| format!("unknown LLM provider '{}'", cfg.provider))?;
+        let lessons = crate::daily_report::generate_lessons(
+            provider.as_ref(), &cfg.standard_model, &report, &lang,
+        ).ok_or_else(|| "Lessons generation failed".to_string())?;
 
         self.report_store
             .lock()
@@ -1098,6 +1114,19 @@ impl Backend for LocalBackend {
 
     fn append_lesson_to_claude_md(&self, lesson: &crate::daily_report::Lesson) -> Result<(), String> {
         crate::daily_report::append_lesson_to_claude_md(lesson)
+    }
+
+    fn list_llm_providers(&self) -> Vec<crate::llm_provider::LlmProviderInfo> {
+        crate::llm_provider::all_provider_infos()
+    }
+
+    fn get_llm_config(&self) -> crate::llm_provider::LlmConfig {
+        self.llm_config.lock().unwrap().clone()
+    }
+
+    fn set_llm_config(&self, config: crate::llm_provider::LlmConfig) -> Result<(), String> {
+        *self.llm_config.lock().unwrap() = config;
+        Ok(())
     }
 }
 
@@ -1121,6 +1150,7 @@ fn detect_waiting_transitions(
     session_outcomes: &Arc<Mutex<HashMap<String, Vec<String>>>>,
     app: &AppHandle,
     locale: &Arc<Mutex<String>>,
+    llm_config: &Arc<Mutex<crate::llm_provider::LlmConfig>>,
 ) {
     let current = sessions.lock().unwrap().clone();
     let mut alerts_changed = false;
@@ -1161,12 +1191,18 @@ fn detect_waiting_transitions(
             let app_bg = app.clone();
             let lang = locale.lock().unwrap().clone();
             let title = get_user_title(&app_bg);
+            let cfg = llm_config.lock().unwrap().clone();
 
             std::thread::spawn(move || {
                 let analysis_text = extract_last_assistant_text(&jsonl_path, 1000)
                     .unwrap_or(last_text);
 
-                let result = crate::claude_analyze::analyze_session_outcome(&analysis_text, &lang, &session_id, &title);
+                let provider = crate::llm_provider::resolve_provider(&cfg.provider);
+                let result = provider.as_ref().and_then(|p| {
+                    crate::claude_analyze::analyze_session_outcome(
+                        p.as_ref(), &cfg.fast_model, &analysis_text, &lang, &session_id, &title,
+                    )
+                });
                 an.lock().unwrap().remove(&session_id);
 
                 // Always store outcome tags for the mascot.

@@ -396,3 +396,17 @@
   text-align: center;
   padding: 20px;
 }
+
+/* macOS vibrancy: semi-transparent backgrounds */
+:global([data-platform="macos"]) .container {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+:global([data-platform="macos"]) .file_item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+:global([data-platform="macos"][data-theme="light"]) .container {
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+:global([data-platform="macos"][data-theme="light"]) .file_item:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
