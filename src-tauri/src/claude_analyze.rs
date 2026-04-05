@@ -4,6 +4,8 @@
 
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::llm_provider::LlmProvider;
 use crate::log_debug;
 
@@ -41,12 +43,21 @@ pub const VALID_TAGS: &[&str] = &[
 ];
 
 /// Result of analysing the last assistant output.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalysisResult {
     /// 1–2 outcome tags (see [`VALID_TAGS`]).
     pub tags: Vec<String>,
     /// Human-readable summary of what the agent just did or needs.
     pub summary: Option<String>,
+}
+
+/// Request body for the `/analyze` probe endpoint.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AnalyzeRequest {
+    pub session_id: String,
+    pub last_text: String,
+    pub locale: String,
+    pub user_title: String,
 }
 
 // ── Prompt ──────────────────────────────────────────────────────────────────

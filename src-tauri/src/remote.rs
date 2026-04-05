@@ -140,6 +140,31 @@ impl ProbeClient {
         Ok(())
     }
 
+    /// POST endpoint with a JSON body, deserialize the JSON response.
+    fn post_json<B: serde::Serialize, T: serde::de::DeserializeOwned>(
+        &self,
+        endpoint: &str,
+        body: &B,
+    ) -> Result<T, String> {
+        let url = format!("{}{}", self.base_url, endpoint);
+        let resp = self.client
+            .post(&url)
+            .header("Authorization", &self.auth_header)
+            .timeout(Duration::from_secs(90))
+            .json(body)
+            .send()
+            .map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            let body_text = resp.text().unwrap_or_default();
+            let err = serde_json::from_str::<serde_json::Value>(&body_text)
+                .ok()
+                .and_then(|v| v["error"].as_str().map(|s| s.to_string()))
+                .unwrap_or(body_text);
+            return Err(err);
+        }
+        resp.json::<T>().map_err(|e| e.to_string())
+    }
+
     /// GET endpoint and return the raw `serde_json::Value`.
     fn get_value(&self, endpoint: &str) -> Result<serde_json::Value, String> {
         self.get::<serde_json::Value>(endpoint)
@@ -919,11 +944,6 @@ fn connect_remote_start_probe(
             .try_state::<crate::AppState>()
             .map(|s| s.locale.lock().unwrap().clone())
             .unwrap_or_else(|| "en".to_string());
-        let llm_config = app
-            .try_state::<crate::AppState>()
-            .map(|s| s.llm_config.lock().unwrap().clone())
-            .unwrap_or_default();
-
         std::thread::spawn(move || {
             use std::collections::{HashMap, HashSet};
             use crate::session::SessionStatus;
@@ -991,15 +1011,20 @@ fn connect_remote_start_probe(
                         let lang = locale.clone();
                         let title = crate::local_backend::get_user_title(&app_bg);
                         let jsonl_path = sess.jsonl_path.clone();
-                        let cfg = llm_config.clone();
+
+                        let probe_bg = probe2.clone();
 
                         std::thread::spawn(move || {
-                            let provider = crate::llm_provider::resolve_provider(&cfg.provider);
-                            let result = provider.as_ref().and_then(|p| {
-                                crate::claude_analyze::analyze_session_outcome(
-                                    p.as_ref(), &cfg.fast_model, &last_text, &lang, &session_id, &title,
-                                )
-                            });
+                            // Delegate LLM analysis to the remote probe which
+                            // has access to CLI tools (Claude Code, etc.).
+                            let req = crate::claude_analyze::AnalyzeRequest {
+                                session_id: session_id.clone(),
+                                last_text,
+                                locale: lang,
+                                user_title: title,
+                            };
+                            let result: Option<crate::claude_analyze::AnalysisResult> =
+                                probe_bg.post_json("/analyze", &req).ok();
                             an.lock().unwrap().remove(&session_id);
 
                             if let Some(ref result) = result {

@@ -1162,6 +1162,7 @@ fn cmd_serve(port: u16, token: String) {
         generate_lessons, append_lesson_to_claude_md, Lesson,
     };
     use claw_fleet_lib::llm_provider::{self, LlmConfig};
+    use claw_fleet_lib::claude_analyze;
 
     let sources = build_sources();
 
@@ -1940,6 +1941,56 @@ fn cmd_serve(port: u16, token: String) {
                     }
                     Err(e) => {
                         let body = format!(r#"{{"error":"invalid config: {}"}}"#, e.to_string().replace('"', "'"));
+                        let _ = request.respond(
+                            tiny_http::Response::from_string(body)
+                                .with_status_code(400)
+                                .with_header(json_header),
+                        );
+                    }
+                }
+            }
+
+            // ── Session outcome analysis (delegated from remote clients) ──
+            "/analyze" => {
+                let mut body_bytes = Vec::new();
+                let _ = std::io::Read::read_to_end(&mut request.as_reader(), &mut body_bytes);
+                match serde_json::from_slice::<claude_analyze::AnalyzeRequest>(&body_bytes) {
+                    Ok(req) => {
+                        let cfg = llm_config.lock().unwrap().clone();
+                        let provider = llm_provider::resolve_provider(&cfg.provider);
+                        let result = provider.as_ref().and_then(|p| {
+                            claude_analyze::analyze_session_outcome(
+                                p.as_ref(),
+                                &cfg.fast_model,
+                                &req.last_text,
+                                &req.locale,
+                                &req.session_id,
+                                &req.user_title,
+                            )
+                        });
+                        match result {
+                            Some(analysis) => {
+                                let body = serde_json::to_string(&analysis).unwrap_or_default();
+                                let _ = request.respond(
+                                    tiny_http::Response::from_string(body)
+                                        .with_header(json_header),
+                                );
+                            }
+                            None => {
+                                let body = r#"{"error":"LLM analysis unavailable"}"#;
+                                let _ = request.respond(
+                                    tiny_http::Response::from_string(body)
+                                        .with_status_code(503)
+                                        .with_header(json_header),
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let body = format!(
+                            r#"{{"error":"invalid request: {}"}}"#,
+                            e.to_string().replace('"', "'")
+                        );
                         let _ = request.respond(
                             tiny_http::Response::from_string(body)
                                 .with_status_code(400)
