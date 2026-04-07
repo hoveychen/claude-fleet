@@ -59,19 +59,25 @@ jobs:
           echo "Downloaded:"
           ls -lh dmg-work/
 
+      - name: Decode API key
+        env:
+          API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_KEY }}
+        run: |
+          mkdir -p private_keys
+          echo "$API_KEY_BASE64" | base64 --decode > "private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8"
+
       - name: Notarize and staple
         env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
           set -o pipefail
           for dmg in dmg-work/*.dmg; do
             echo "── Submitting $(basename "$dmg") for notarization..."
             xcrun notarytool submit "$dmg" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" \
+              --key "private_keys/AuthKey_${API_KEY_ID}.p8" \
+              --key-id "$API_KEY_ID" \
+              --issuer "$API_ISSUER_ID" \
               --wait \
               --timeout 15m \
               2>&1 | tee notarize-output.log
@@ -85,18 +91,18 @@ jobs:
               echo "── Notarization failed or rejected. Fetching detailed log..."
               if [ -n "$SUB_ID" ]; then
                 xcrun notarytool log "$SUB_ID" \
-                  --apple-id "$APPLE_ID" \
-                  --password "$APPLE_PASSWORD" \
-                  --team-id "$APPLE_TEAM_ID" \
+                  --key "private_keys/AuthKey_${API_KEY_ID}.p8" \
+                  --key-id "$API_KEY_ID" \
+                  --issuer "$API_ISSUER_ID" \
                   notarize-log.json || true
                 echo "── Notarization detailed log:"
                 cat notarize-log.json 2>/dev/null || echo "(no log available)"
                 echo ""
                 echo "── Notarization info:"
                 xcrun notarytool info "$SUB_ID" \
-                  --apple-id "$APPLE_ID" \
-                  --password "$APPLE_PASSWORD" \
-                  --team-id "$APPLE_TEAM_ID" || true
+                  --key "private_keys/AuthKey_${API_KEY_ID}.p8" \
+                  --key-id "$API_KEY_ID" \
+                  --issuer "$API_ISSUER_ID" || true
               else
                 echo "(could not extract submission ID)"
               fi
