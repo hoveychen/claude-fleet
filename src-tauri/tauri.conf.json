@@ -43,8 +43,6 @@
         "url": "/tray.html",
         "width": 360,
         "height": 520,
-        "x": -9999,
-        "y": -9999,
         "resizable": false,
         "decorations": false,
         "transparent": true,
@@ -52,7 +50,7 @@
         "skipTaskbar": true,
         "shadow": false,
         "focus": false,
-        "visible": true
+        "visible": false
       }
     ],
     "security": {

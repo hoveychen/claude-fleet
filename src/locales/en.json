@@ -866,6 +866,10 @@
       "openclaw": "OpenClaw",
       "codex": "Codex"
     },
+    "mobile_access": "Mobile",
+    "mobile_desc": "Enable mobile access to monitor your agents from your phone. Requires cloudflared for remote access.",
+    "mobile_enable": "Enable Mobile Access",
+    "mobile_clients": "Connected Clients",
     "notifications": "Notifications",
     "notification_mode": "Notify when agent is waiting",
     "notify_all": "All waiting sessions",
@@ -999,5 +1003,16 @@
     "tab_insights": "Insights",
     "tab_daily": "Daily Report",
     "no_insights": "No insights yet. Reports will appear here as data is collected."
+  },
+  "mobile_panel": {
+    "scan_hint": "Scan this QR code with the Claw Fleet mobile app",
+    "downloading": "Downloading cloudflared...",
+    "starting_tunnel": "Starting tunnel...",
+    "active": "Mobile access active",
+    "connected_devices": "device(s) connected",
+    "tunnel_failed": "Failed to establish tunnel. Please try again.",
+    "retry": "Retry",
+    "stop_access": "Stop Mobile Access",
+    "confirm_disable": "Stop mobile access? Any connected mobile devices will be disconnected."
   }
 }

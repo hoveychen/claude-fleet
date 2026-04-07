@@ -247,6 +247,41 @@
   transform: rotate(45deg);
 }
 
+.footer_mobile_btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  color: var(--color-text-dim);
+  cursor: pointer;
+  border-radius: 6px;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+
+.footer_mobile_btn:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.footer_mobile_active {
+  color: #6366f1;
+}
+
+.footer_mobile_dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ade80;
+}
+
 /* ── Main content area (list mode) ─────────────────────────────────────── */
 
 .main_area {

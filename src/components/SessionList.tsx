@@ -12,6 +12,7 @@ import { ReportView } from "./report/ReportView";
 import { SkillsPanel } from "./SkillsPanel";
 import { SessionCard } from "./SessionCard";
 import { SessionToolbar } from "./SessionToolbar";
+import { MobileAccessPanel } from "./MobileAccessPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import styles from "./SessionList.module.css";
 import { TokenSpeedChart } from "./TokenSpeedChart";
@@ -45,6 +46,20 @@ export function SessionList() {
   const [isDragging, setIsDragging] = useState(false);
   const [isWindows, setIsWindows] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showMobileAccess, setShowMobileAccess] = useState(false);
+  const [mobileActive, setMobileActive] = useState(false);
+
+  // Poll mobile access status for the sidebar indicator.
+  useEffect(() => {
+    const check = () => {
+      invoke<{ running: boolean; tunnelUrl: string | null }>("get_mobile_access_status")
+        .then((s) => setMobileActive(s.running && !!s.tunnelUrl))
+        .catch(() => {});
+    };
+    check();
+    const interval = setInterval(check, 5000);
+    return () => clearInterval(interval);
+  }, []);
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   useEffect(() => {
@@ -272,6 +287,17 @@ export function SessionList() {
                 {isRemote ? t("settings.remote") : t("settings.local")}
               </span>
             </div>
+            <button
+              className={`${styles.footer_mobile_btn} ${mobileActive ? styles.footer_mobile_active : ""}`}
+              onClick={(e) => { e.stopPropagation(); setShowMobileAccess(true); }}
+              title={t("settings.mobile_access")}
+            >
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="4" y="1" width="8" height="14" rx="1.5" />
+                <line x1="7" y1="12" x2="9" y2="12" />
+              </svg>
+              {mobileActive && <span className={styles.footer_mobile_dot} />}
+            </button>
             <span className={styles.footer_gear}>⚙</span>
           </button>
         </div>
@@ -285,6 +311,9 @@ export function SessionList() {
 
       {/* Settings panel */}
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
+
+      {/* Mobile access panel */}
+      {showMobileAccess && <MobileAccessPanel onClose={() => setShowMobileAccess(false)} />}
 
       {/* Main content area */}
       {viewMode === "list" ? (

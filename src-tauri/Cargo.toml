@@ -41,6 +41,7 @@ tokio = { version = "1", features = ["rt"] }
 tauri-plugin-notification = "2.3.3"
 tauri-plugin-store = "2.4.2"
 tauri-plugin-clipboard-manager = "2.3.2"
+tauri-plugin-dialog = "2"
 zstd = "0.13"
 msedge-tts = { version = "0.3", optional = true }
 rodio = { version = "0.19", default-features = false, features = ["mp3"], optional = true }
@@ -48,6 +49,9 @@ rodio = { version = "0.19", default-features = false, features = ["mp3"], option
 [features]
 default = []
 tts = ["msedge-tts", "rodio"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
 
 [target.'cfg(not(windows))'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }

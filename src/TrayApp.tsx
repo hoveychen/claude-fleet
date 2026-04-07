@@ -74,8 +74,9 @@ function TrayApp() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
-  // Auto-hide on blur is handled entirely in Rust (on_window_event)
-  // to avoid IPC timing issues with macOS spurious blur events.
+  // Auto-hide on blur is handled in Rust:
+  // macOS — via NSPanel windowDidResignKey delegate (tauri-nspanel).
+  // Other — via Tauri WindowEvent::Focused(false).
 
   return <TrayPanel usageSummaries={usageSummaries} />;
 }

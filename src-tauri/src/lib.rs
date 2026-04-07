@@ -7,6 +7,7 @@ pub mod claude_source;
 pub mod codex_source;
 pub mod cursor;
 pub mod daily_report;
+pub mod embedded_server;
 pub mod hooks;
 pub mod llm_provider;
 pub mod local_backend;
@@ -18,6 +19,7 @@ pub mod search_index;
 pub mod session;
 pub mod skills;
 pub mod tcc;
+pub mod tunnel;
 pub mod version_check;
 
 use std::collections::hash_map::DefaultHasher;
@@ -29,9 +31,30 @@ use std::sync::OnceLock;
 
 use serde::Serialize;
 use serde_json::Value;
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Listener, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
+
+#[cfg(target_os = "macos")]
+use tauri_nspanel::{ManagerExt, WebviewWindowExt};
+
+// ── macOS NSPanel types for the tray popup ──────────────────────────────────
+// On macOS, the tray panel must be an NSPanel (not NSWindow) so that:
+//  1. Showing it doesn't steal focus from other apps (NonActivatingPanel).
+//  2. Clicking outside reliably fires `windowDidResignKey` for auto-hide.
+#[cfg(target_os = "macos")]
+tauri_nspanel::tauri_panel! {
+    panel!(TrayNSPanel {
+        config: {
+            can_become_key_window: true,
+            can_become_main_window: false,
+        }
+    })
+
+    panel_event!(TrayPanelHandler {
+        window_did_resign_key(notification: &NSNotification) -> (),
+    })
+}
 
 use account::AccountInfo;
 use backend::Backend;
@@ -770,13 +793,16 @@ pub struct AppState {
     pub tray_last_click: Arc<Mutex<std::time::Instant>>,
     /// Whether a deferred tray rebuild is pending.
     pub tray_rebuild_pending: Arc<Mutex<bool>>,
-    /// Timestamp when the tray panel was last shown.  Used to ignore the
-    /// spurious focus-lost event that macOS fires when a tray click finishes.
-    pub tray_panel_shown_at: Arc<Mutex<std::time::Instant>>,
     /// LLM provider config (which CLI + models to use for analysis/reports).
     pub llm_config: Arc<Mutex<llm_provider::LlmConfig>>,
     /// Cached LLM provider info — pre-fetched at startup so Settings opens instantly.
     pub cached_llm_providers: Arc<Mutex<Vec<llm_provider::LlmProviderInfo>>>,
+    /// Mobile access: embedded HTTP server (None = not started).
+    pub mobile_server: Arc<Mutex<Option<embedded_server::EmbeddedServer>>>,
+    /// Mobile access: Cloudflare tunnel (None = not started).
+    pub mobile_tunnel: Arc<Mutex<Option<tunnel::CloudflareTunnel>>>,
+    /// Whether mobile access setup (download + tunnel) is in progress.
+    pub mobile_setup_in_progress: Arc<std::sync::atomic::AtomicBool>,
 }
 
 // ── Tauri commands ───────────────────────────────────────────────────────────
@@ -1357,32 +1383,53 @@ fn show_tray_panel_at(app: &tauri::AppHandle, click_x: f64, click_y: f64) {
     let _ = w.set_position(tauri::Position::Physical(
         tauri::PhysicalPosition::new(x as i32, y as i32),
     ));
-    // Record show timestamp *before* showing, so the window-event
-    // listener can see it immediately — no IPC delay.
-    let state = app.state::<AppState>();
-    *state.tray_panel_shown_at.lock().unwrap() = std::time::Instant::now();
 
-    let _ = w.show();
-    let _ = w.set_focus();
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(panel) = app.get_webview_panel("tray_panel") {
+            panel.show();
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
 
     // Emit cached usage summaries so the panel can show them immediately.
+    let state = app.state::<AppState>();
     let summaries = state.cached_usage.lock().unwrap().clone();
     let _ = app.emit_to("tray_panel", "tray-usage-updated", &summaries);
 }
 
 fn hide_tray_panel(app: &tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("tray_panel") {
-        let _ = w.set_position(tauri::Position::Logical(
-            tauri::LogicalPosition::new(-9999.0, -9999.0),
-        ));
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(panel) = app.get_webview_panel("tray_panel") {
+            panel.hide();
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Some(w) = app.get_webview_window("tray_panel") {
+            let _ = w.hide();
+        }
     }
 }
 
 fn is_tray_panel_visible(app: &tauri::AppHandle) -> bool {
-    app.get_webview_window("tray_panel")
-        .and_then(|w| w.outer_position().ok())
-        .map(|pos| pos.x > -5000 && pos.y > -5000)
-        .unwrap_or(false)
+    #[cfg(target_os = "macos")]
+    {
+        app.get_webview_panel("tray_panel")
+            .map(|p| p.is_visible())
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        app.get_webview_window("tray_panel")
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(false)
+    }
 }
 
 #[tauri::command]
@@ -1621,11 +1668,211 @@ fn build_tray_menu(
     builder.build()
 }
 
+// ── Mobile access commands ──────────────────────────────────────────────────
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MobileAccessInfo {
+    running: bool,
+    port: u16,
+    token: String,
+    tunnel_url: Option<String>,
+    connected_clients: usize,
+    cloudflared_available: bool,
+    /// True while cloudflared is being downloaded / tunnel is being set up.
+    setting_up: bool,
+    /// Error message if tunnel setup failed.
+    error: Option<String>,
+}
+
+#[tauri::command]
+async fn enable_mobile_access(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<MobileAccessInfo, String> {
+    // Stop existing server/tunnel if any.
+    {
+        let mut tunnel_guard = state.mobile_tunnel.lock().unwrap();
+        if let Some(mut t) = tunnel_guard.take() {
+            t.stop();
+        }
+        let mut server_guard = state.mobile_server.lock().unwrap();
+        if let Some(mut s) = server_guard.take() {
+            s.stop();
+        }
+    }
+
+    // Generate a random auth token.
+    let token: String = {
+        let mut hasher = DefaultHasher::new();
+        std::time::SystemTime::now().hash(&mut hasher);
+        std::process::id().hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    };
+
+    // Pick an available port (bind to 0, get assigned port, release).
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| format!("cannot find available port: {e}"))?;
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        port
+    };
+
+    // Start the embedded HTTP server (waits for bind confirmation).
+    let backend = state.backend.clone();
+    let server = embedded_server::EmbeddedServer::start(backend, port, token.clone())
+        .map_err(|e| format!("embedded server failed: {e}"))?;
+
+    log_debug(&format!("[mobile-access] server started on port {port}"));
+
+    // Store server immediately so it's usable even while tunnel downloads.
+    *state.mobile_server.lock().unwrap() = Some(server);
+
+    // Mark setup as in-progress.
+    state.mobile_setup_in_progress.store(true, std::sync::atomic::Ordering::Relaxed);
+
+    // Download cloudflared (if needed) and start tunnel — in a blocking thread
+    // so we don't freeze the UI.
+    let mobile_tunnel = state.mobile_tunnel.clone();
+    let setup_flag = state.mobile_setup_in_progress.clone();
+    let app_for_progress = app.clone();
+    let app_for_phase = app.clone();
+    let tunnel_result = tokio::task::spawn_blocking(move || {
+        // Notify frontend we're checking/downloading cloudflared.
+        let _ = app_for_phase.emit("mobile-access-phase", "downloading");
+
+        let progress_cb: tunnel::ProgressFn = Box::new(move |downloaded, total| {
+            let _ = app_for_progress.emit("mobile-access-progress", serde_json::json!({
+                "downloaded": downloaded,
+                "total": total,
+            }));
+        });
+
+        let binary = tunnel::find_or_download_cloudflared_with_progress(Some(progress_cb))
+            .map_err(|e| e.to_string())?;
+
+        // Notify frontend we're starting the tunnel.
+        let _ = app_for_phase.emit("mobile-access-phase", "tunnel");
+
+        tunnel::CloudflareTunnel::start_with_binary(&binary, port)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| {
+        setup_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+        format!("task failed: {e}")
+    })?;
+
+    // Setup done.
+    state.mobile_setup_in_progress.store(false, std::sync::atomic::Ordering::Relaxed);
+
+    let (tunnel_url, tunnel_error) = match &tunnel_result {
+        Ok(t) => (Some(t.url().to_string()), None),
+        Err(e) => {
+            log_debug(&format!("[mobile-access] tunnel failed: {e}"));
+            eprintln!("[mobile-access] tunnel failed: {e}");
+            (None, Some(e.clone()))
+        }
+    };
+
+    if let Ok(t) = tunnel_result {
+        *mobile_tunnel.lock().unwrap() = Some(t);
+    }
+
+    let server_guard = state.mobile_server.lock().unwrap();
+    let info = MobileAccessInfo {
+        running: true,
+        port,
+        token,
+        tunnel_url,
+        connected_clients: server_guard.as_ref().map_or(0, |s| s.broadcaster().client_count()),
+        cloudflared_available: tunnel::is_cloudflared_available(),
+        setting_up: false,
+        error: tunnel_error,
+    };
+
+    // Signal completion.
+    let _ = app.emit("mobile-access-ready", &info);
+
+    Ok(info)
+}
+
+#[tauri::command]
+async fn disable_mobile_access(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut tunnel = state.mobile_tunnel.lock().unwrap().take();
+    let mut server = state.mobile_server.lock().unwrap().take();
+    state.mobile_setup_in_progress.store(false, std::sync::atomic::Ordering::Relaxed);
+
+    // Stop in a blocking thread so we don't freeze the UI.
+    tokio::task::spawn_blocking(move || {
+        if let Some(ref mut t) = tunnel {
+            t.stop();
+        }
+        if let Some(ref mut s) = server {
+            s.stop();
+        }
+    })
+    .await
+    .map_err(|e| format!("stop failed: {e}"))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn get_mobile_access_status(state: tauri::State<'_, AppState>) -> MobileAccessInfo {
+    let server_guard = state.mobile_server.lock().unwrap();
+    let tunnel_guard = state.mobile_tunnel.lock().unwrap();
+    let setting_up = state.mobile_setup_in_progress.load(std::sync::atomic::Ordering::Relaxed);
+
+    match server_guard.as_ref() {
+        Some(server) => {
+            let tunnel_url = tunnel_guard.as_ref().map(|t| t.url().to_string());
+            MobileAccessInfo {
+                running: true,
+                port: server.port(),
+                token: server.token().to_string(),
+                tunnel_url,
+                connected_clients: server.broadcaster().client_count(),
+                cloudflared_available: tunnel::is_cloudflared_available(),
+                setting_up,
+                error: None,
+            }
+        }
+        None => MobileAccessInfo {
+            running: false,
+            port: 0,
+            token: String::new(),
+            tunnel_url: None,
+            connected_clients: 0,
+            cloudflared_available: tunnel::is_cloudflared_available(),
+            setting_up,
+            error: None,
+        },
+    }
+}
+
+/// Returns the QR code data for mobile pairing.
+/// The QR encodes a URL: `https://xxx.trycloudflare.com/mobile?token=TOKEN`
+/// - Scanned by Claw Fleet app → parsed as connection URL
+/// - Scanned by generic QR reader → opens landing page in browser
+#[tauri::command]
+fn get_mobile_qr_data(state: tauri::State<'_, AppState>) -> Option<String> {
+    let server_guard = state.mobile_server.lock().unwrap();
+    let tunnel_guard = state.mobile_tunnel.lock().unwrap();
+
+    let server = server_guard.as_ref()?;
+    let tunnel = tunnel_guard.as_ref()?;
+
+    // URL format that serves both as a web page and as app connection data.
+    Some(format!("{}/mobile?token={}", tunnel.url(), server.token()))
+}
+
 // ── App setup ────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show();
@@ -1636,7 +1883,14 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .manage(AppState {
+        .plugin(tauri_plugin_dialog::init());
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.plugin(tauri_nspanel::init());
+    }
+
+    builder.manage(AppState {
             // NullBackend is a placeholder; replaced with LocalBackend in setup().
             backend: Arc::new(RwLock::new(Box::new(backend::NullBackend) as Box<dyn Backend>)),
             locale: Arc::new(Mutex::new("en".to_string())),
@@ -1647,9 +1901,11 @@ pub fn run() {
             tray_fingerprint: Arc::new(Mutex::new(0)),
             tray_last_click: Arc::new(Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(600))),
             tray_rebuild_pending: Arc::new(Mutex::new(false)),
-            tray_panel_shown_at: Arc::new(Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(600))),
             llm_config: Arc::new(Mutex::new(llm_provider::LlmConfig::default())),
             cached_llm_providers: Arc::new(Mutex::new(Vec::new())),
+            mobile_server: Arc::new(Mutex::new(None)),
+            mobile_tunnel: Arc::new(Mutex::new(None)),
+            mobile_setup_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
         .setup(move |app| {
             // Replace NullBackend with the real LocalBackend now that AppHandle
@@ -1675,6 +1931,33 @@ pub fn run() {
                 std::thread::spawn(move || {
                     let infos = llm_provider::all_provider_infos();
                     *cached.lock().unwrap() = infos;
+                });
+            }
+
+            // ── SSE forwarding for mobile access ──────────────────────────
+            // Listen for sessions-updated Tauri events and broadcast them to
+            // any connected SSE mobile clients.
+            {
+                let mobile_server = app.state::<AppState>().mobile_server.clone();
+                app.listen("sessions-updated", move |event| {
+                    let guard = mobile_server.lock().unwrap();
+                    if let Some(ref server) = *guard {
+                        if server.broadcaster().client_count() > 0 {
+                            // event.payload() is already a JSON string.
+                            server.broadcaster().broadcast("sessions-updated", event.payload());
+                        }
+                    }
+                });
+            }
+            {
+                let mobile_server = app.state::<AppState>().mobile_server.clone();
+                app.listen("waiting-alert", move |event| {
+                    let guard = mobile_server.lock().unwrap();
+                    if let Some(ref server) = *guard {
+                        if server.broadcaster().client_count() > 0 {
+                            server.broadcaster().broadcast("waiting-alert", event.payload());
+                        }
+                    }
                 });
             }
 
@@ -1792,35 +2075,60 @@ pub fn run() {
                 });
             }
 
-            // ── Tray panel: auto-hide on focus loss ─────────────────────────
-            // Handled entirely in Rust to avoid IPC timing issues.
-            if let Some(panel) = app.get_webview_window("tray_panel") {
-                let app_handle = app.handle().clone();
-                panel.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Focused(false) = event {
-                        if cfg!(target_os = "macos") {
-                            let state = app_handle.state::<AppState>();
-                            let elapsed = state.tray_panel_shown_at.lock().unwrap().elapsed();
-                            if elapsed < std::time::Duration::from_millis(600) {
-                                // macOS steals focus when the status-bar click
-                                // finishes.  Re-focus the panel after a short
-                                // delay so that subsequent outside-clicks will
-                                // trigger a proper blur → hide.
-                                let handle = app_handle.clone();
-                                std::thread::spawn(move || {
-                                    std::thread::sleep(std::time::Duration::from_millis(200));
-                                    if is_tray_panel_visible(&handle) {
-                                        if let Some(w) = handle.get_webview_window("tray_panel") {
-                                            let _ = w.set_focus();
-                                        }
-                                    }
-                                });
-                                return;
-                            }
+            // ── Tray panel: auto-hide ────────────────────────────────────────
+            #[cfg(target_os = "macos")]
+            {
+                // Swizzle the Tauri NSWindow → NSPanel so that:
+                //  • showing the panel doesn't steal focus (NonActivatingPanel)
+                //  • windowDidResignKey fires reliably for auto-hide
+                if let Some(panel_window) = app.get_webview_window("tray_panel") {
+                    let panel = panel_window.to_panel::<TrayNSPanel>()
+                        .expect("failed to swizzle tray_panel to NSPanel");
+
+                    use tauri_nspanel::{PanelLevel, CollectionBehavior, StyleMask};
+                    panel.set_level(PanelLevel::MainMenu.value() + 1);
+                    panel.set_collection_behavior(
+                        CollectionBehavior::new()
+                            .can_join_all_spaces()
+                            .stationary()
+                            .full_screen_auxiliary()
+                            .value(),
+                    );
+                    panel.set_style_mask(
+                        StyleMask::empty().nonactivating_panel().value(),
+                    );
+                    panel.set_hides_on_deactivate(false);
+
+                    // Auto-hide when the panel loses key-window status
+                    // (user clicked outside the panel).
+                    let handler = TrayPanelHandler::new();
+                    let handle = app.handle().clone();
+                    handler.window_did_resign_key(move |_| {
+                        // If a tray icon click just happened, skip — the tray
+                        // click handler will toggle visibility itself.
+                        let state = handle.state::<AppState>();
+                        let since_click = state.tray_last_click.lock().unwrap().elapsed();
+                        if since_click < std::time::Duration::from_millis(500) {
+                            return;
                         }
-                        hide_tray_panel(&app_handle);
-                    }
-                });
+                        hide_tray_panel(&handle);
+                    });
+                    panel.set_event_handler(Some(handler.as_ref()));
+                    // Keep handler alive for the app's lifetime.
+                    std::mem::forget(handler);
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                // Windows/Linux: hide on focus loss via window event.
+                if let Some(panel) = app.get_webview_window("tray_panel") {
+                    let app_handle = app.handle().clone();
+                    panel.on_window_event(move |event| {
+                        if let tauri::WindowEvent::Focused(false) = event {
+                            hide_tray_panel(&app_handle);
+                        }
+                    });
+                }
             }
 
             // ── macOS vibrancy (frosted glass sidebar) ────────────────────
@@ -1908,6 +2216,10 @@ pub fn run() {
             generate_daily_report_ai_summary,
             generate_daily_report_lessons,
             append_lesson_to_claude_md,
+            enable_mobile_access,
+            disable_mobile_access,
+            get_mobile_access_status,
+            get_mobile_qr_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

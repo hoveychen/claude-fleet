@@ -866,6 +866,10 @@
       "openclaw": "OpenClaw",
       "codex": "Codex"
     },
+    "mobile_access": "移动端",
+    "mobile_desc": "开启移动端访问，从手机监控你的 Agent。远程访问需要安装 cloudflared。",
+    "mobile_enable": "开启移动端访问",
+    "mobile_clients": "已连接客户端",
     "notifications": "通知",
     "notification_mode": "Agent 等待时通知",
     "notify_all": "所有等待会话",
@@ -999,5 +1003,16 @@
     "tab_insights": "动态",
     "tab_daily": "日报",
     "no_insights": "暂无动态。收集到数据后报告会出现在这里。"
+  },
+  "mobile_panel": {
+    "scan_hint": "用 Claw Fleet 移动端扫描此二维码连接",
+    "downloading": "正在下载 cloudflared...",
+    "starting_tunnel": "正在启动隧道...",
+    "active": "移动端访问已开启",
+    "connected_devices": "台设备已连接",
+    "tunnel_failed": "隧道建立失败，请重试。",
+    "retry": "重试",
+    "stop_access": "终止移动端访问",
+    "confirm_disable": "确定终止移动端访问？所有已连接的移动设备将断开。"
   }
 }

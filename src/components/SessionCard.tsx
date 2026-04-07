@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { useSessionsStore } from "../store";
 import type { SessionInfo, SessionStatus } from "../types";
 import styles from "./SessionCard.module.css";
@@ -293,7 +294,7 @@ export function SessionCard({ session, isSelected, onClick, variant, hideHeader 
     if (!session.pid || killing) return;
 
     if (session.pidPrecise) {
-      const confirmed = window.confirm(t("stop_confirm", { name: session.workspaceName }));
+      const confirmed = await ask(t("stop_confirm", { name: session.workspaceName }), { kind: "warning" });
       if (!confirmed) return;
       setKilling(true);
       try {
@@ -302,8 +303,9 @@ export function SessionCard({ session, isSelected, onClick, variant, hideHeader 
         setKilling(false);
       }
     } else {
-      const confirmed = window.confirm(
-        t("stop_imprecise_confirm", { workspace: session.workspaceName })
+      const confirmed = await ask(
+        t("stop_imprecise_confirm", { workspace: session.workspaceName }),
+        { kind: "warning" }
       );
       if (!confirmed) return;
       setKilling(true);

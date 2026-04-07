@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useConnectionStore, useDetailStore, useOverlayStore } from "../store";
 import { getItem, setItem } from "../storage";
 import { playChime, speakText, getVoices, CHIME_PRESETS, type ChimePreset, type TtsVoice } from "../audio";
+import { QRCodeCanvas } from "qrcode.react";
 import { AccountInfo } from "./AccountInfo";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { ThemeToggle } from "./ThemeToggle";
@@ -45,7 +46,18 @@ interface LlmConfig {
 
 type NotificationMode = "all" | "user_action" | "none";
 type TtsMode = "chime_and_speech" | "chime_only" | "off";
-type SettingsTab = "general" | "appearance" | "profile" | "connection" | "notifications" | "sound";
+type SettingsTab = "general" | "appearance" | "profile" | "connection" | "mobile" | "notifications" | "sound";
+
+interface MobileAccessInfo {
+  running: boolean;
+  port: number;
+  token: string;
+  tunnelUrl: string | null;
+  connectedClients: number;
+  cloudflaredAvailable: boolean;
+  settingUp: boolean;
+  error: string | null;
+}
 
 const tabIcons: Record<SettingsTab, React.ReactNode> = {
   general: (
@@ -70,6 +82,12 @@ const tabIcons: Record<SettingsTab, React.ReactNode> = {
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M6 10l4-4" />
       <path d="M9.5 3.5l1-1a2.12 2.12 0 0 1 3 3l-1 1M6.5 12.5l-1 1a2.12 2.12 0 0 1-3-3l1-1" />
+    </svg>
+  ),
+  mobile: (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="4" y="1" width="8" height="14" rx="1.5" />
+      <line x1="7" y1="12" x2="9" y2="12" />
     </svg>
   ),
   notifications: (
@@ -267,6 +285,39 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const overlayEnabled = useOverlayStore((s) => s.enabled);
   const setOverlayEnabled = useOverlayStore((s) => s.setEnabled);
 
+  // ── Mobile access state ──────────────────────────────────────────────
+  const [mobileAccess, setMobileAccess] = useState<MobileAccessInfo | null>(null);
+  const [mobileLoading, setMobileLoading] = useState(false);
+  const [mobileQrData, setMobileQrData] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke<MobileAccessInfo>("get_mobile_access_status").then((info) => {
+      setMobileAccess(info);
+      if (info.running) {
+        invoke<string | null>("get_mobile_qr_data").then(setMobileQrData).catch(() => {});
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleEnableMobileAccess = useCallback(async () => {
+    setMobileLoading(true);
+    try {
+      const info = await invoke<MobileAccessInfo>("enable_mobile_access");
+      setMobileAccess(info);
+      const qr = await invoke<string | null>("get_mobile_qr_data");
+      setMobileQrData(qr);
+    } catch (e) {
+      console.error("Failed to enable mobile access:", e);
+    }
+    setMobileLoading(false);
+  }, []);
+
+  const handleDisableMobileAccess = useCallback(async () => {
+    await invoke("disable_mobile_access").catch(() => {});
+    setMobileAccess(null);
+    setMobileQrData(null);
+  }, []);
+
   const handleSwitchConnection = useCallback(async () => {
     await useDetailStore.getState().close();
     await disconnect();
@@ -280,6 +331,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
     { key: "appearance", label: t("settings.appearance") },
     { key: "profile", label: t("settings.profile") },
     { key: "connection", label: t("settings.connection") },
+    { key: "mobile", label: t("settings.mobile_access") },
     { key: "notifications", label: t("settings.notifications") },
     { key: "sound", label: t("settings.sound") },
   ];
@@ -557,6 +609,82 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                       {t("settings.sources_restart_btn")}
                     </button>
                   </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Mobile Access ── */}
+            {activeTab === "mobile" && (
+              <div className={styles.section}>
+                <div className={styles.section_title}>{t("settings.mobile_access")}</div>
+                <div className={styles.row}>
+                  <span className={styles.row_label} style={{ fontSize: 11, color: "var(--color-text-dim)" }}>
+                    {t("settings.mobile_desc")}
+                  </span>
+                </div>
+
+                <div className={styles.row}>
+                  {mobileAccess?.running ? (
+                    <button className={styles.switch_btn} onClick={handleDisableMobileAccess}>
+                      {t("settings.mobile_disable")}
+                    </button>
+                  ) : (
+                    <button
+                      className={styles.hooks_install_btn}
+                      onClick={handleEnableMobileAccess}
+                      disabled={mobileLoading}
+                    >
+                      {mobileLoading ? t("account.loading") : t("settings.mobile_enable")}
+                    </button>
+                  )}
+                </div>
+
+                {mobileAccess?.running && (
+                  <>
+                    {/* Status info */}
+                    <div className={styles.row}>
+                      <span className={styles.row_label}>{t("settings.mobile_status")}</span>
+                      <span className={styles.hooks_ok}>
+                        {mobileAccess.tunnelUrl ? t("settings.mobile_tunnel_active") : t("settings.mobile_local_only")}
+                      </span>
+                    </div>
+
+                    {mobileAccess.tunnelUrl && (
+                      <div className={styles.row}>
+                        <span className={styles.row_label}>URL</span>
+                        <span className={styles.connection_badge} style={{ fontSize: 10, wordBreak: "break-all" }}>
+                          {mobileAccess.tunnelUrl}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className={styles.row}>
+                      <span className={styles.row_label}>{t("settings.mobile_clients")}</span>
+                      <span>{mobileAccess.connectedClients}</span>
+                    </div>
+
+                    {/* QR Code */}
+                    {mobileQrData && (
+                      <div className={styles.row} style={{ justifyContent: "center", padding: "16px 0" }}>
+                        <div style={{
+                          background: "#fff",
+                          padding: 16,
+                          borderRadius: 8,
+                          display: "inline-block",
+                        }}>
+                          <QRCodeCanvas value={mobileQrData} size={200} />
+                        </div>
+                      </div>
+                    )}
+
+                    {!mobileAccess.tunnelUrl && !mobileAccess.cloudflaredAvailable && (
+                      <div className={styles.row}>
+                        <span className={styles.hooks_warn}>
+                          {t("settings.mobile_no_cloudflared")}
+                        </span>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}

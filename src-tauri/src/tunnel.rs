@@ -1,0 +1,417 @@
+//! Cloudflare Quick Tunnel integration.
+//!
+//! Spawns `cloudflared tunnel --url http://localhost:<port>` to expose a local
+//! port via a random `*.trycloudflare.com` URL.  No Cloudflare account needed.
+//!
+//! If `cloudflared` is not found on the system, it is automatically downloaded
+//! to `~/.fleet/cloudflared` on first use (~18 MB download).
+
+use std::io::BufRead;
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+use std::sync::{mpsc, Arc};
+use std::time::Duration;
+
+/// A running Cloudflare Quick Tunnel.
+pub struct CloudflareTunnel {
+    process: Child,
+    public_url: String,
+}
+
+/// Errors that can occur when starting a tunnel.
+#[derive(Debug)]
+pub enum TunnelError {
+    /// Failed to download cloudflared.
+    DownloadFailed(String),
+    /// Failed to spawn the process.
+    SpawnFailed(String),
+    /// Could not parse the public URL from cloudflared output.
+    /// Contains the last few lines of cloudflared stderr for diagnostics.
+    UrlParseTimeout(String),
+}
+
+impl std::fmt::Display for TunnelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TunnelError::DownloadFailed(e) => write!(f, "failed to download cloudflared: {e}"),
+            TunnelError::SpawnFailed(e) => write!(f, "failed to start cloudflared: {e}"),
+            TunnelError::UrlParseTimeout(output) => write!(
+                f,
+                "timed out waiting for tunnel URL. cloudflared output:\n{output}"
+            ),
+        }
+    }
+}
+
+impl CloudflareTunnel {
+    /// Start a Quick Tunnel pointing to `http://localhost:<port>`.
+    ///
+    /// If `cloudflared` is not installed, it will be automatically downloaded
+    /// to `~/.fleet/cloudflared`.
+    ///
+    /// Blocks until the tunnel URL is available (up to 30 seconds).
+    pub fn start(local_port: u16) -> Result<Self, TunnelError> {
+        let binary = find_or_download_cloudflared()?;
+        Self::start_with_binary(&binary, local_port)
+    }
+
+    /// Start a Quick Tunnel using a specific binary path.
+    pub fn start_with_binary(binary: &str, local_port: u16) -> Result<Self, TunnelError> {
+        eprintln!("[tunnel] starting: {binary} tunnel --url http://127.0.0.1:{local_port}");
+
+        let mut child = Command::new(binary)
+            .args([
+                "tunnel",
+                "--protocol", "http2",
+                "--url",
+                &format!("http://127.0.0.1:{local_port}"),
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| TunnelError::SpawnFailed(format!("{e} (binary: {binary})")))?;
+
+        // cloudflared prints the tunnel URL to stderr.
+        let stderr = child.stderr.take().unwrap();
+        let (url_tx, url_rx) = mpsc::channel();
+        let stderr_lines: Arc<std::sync::Mutex<Vec<String>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stderr_lines_clone = stderr_lines.clone();
+
+        std::thread::spawn(move || {
+            let reader = std::io::BufReader::new(stderr);
+            for line in reader.lines() {
+                let line = match line {
+                    Ok(l) => l,
+                    Err(_) => break,
+                };
+                eprintln!("[cloudflared] {line}");
+                stderr_lines_clone.lock().unwrap().push(line.clone());
+                if let Some(url) = extract_tunnel_url(&line) {
+                    let _ = url_tx.send(url);
+                    // Keep reading stderr (don't break) so cloudflared doesn't
+                    // get a broken pipe, but stop collecting lines.
+                }
+            }
+        });
+
+        // Wait up to 30 seconds for the URL.
+        match url_rx.recv_timeout(Duration::from_secs(30)) {
+            Ok(public_url) => {
+                eprintln!("[tunnel] public URL: {public_url}");
+                Ok(CloudflareTunnel {
+                    process: child,
+                    public_url,
+                })
+            }
+            Err(_) => {
+                // Collect whatever cloudflared printed for diagnostics.
+                let lines = stderr_lines.lock().unwrap();
+                let output = if lines.is_empty() {
+                    "(no output from cloudflared)".to_string()
+                } else {
+                    lines.iter().rev().take(5).cloned().collect::<Vec<_>>().join("\n")
+                };
+                // Kill the failed process.
+                let _ = child.kill();
+                let _ = child.wait();
+                Err(TunnelError::UrlParseTimeout(output))
+            }
+        }
+    }
+
+    /// The public HTTPS URL for this tunnel.
+    pub fn url(&self) -> &str {
+        &self.public_url
+    }
+
+    /// Stop the tunnel by killing the cloudflared process.
+    pub fn stop(&mut self) {
+        let _ = self.process.kill();
+        let _ = self.process.wait();
+    }
+}
+
+impl Drop for CloudflareTunnel {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+// ── Find or download ────────────────────────────────────────────────────────
+
+/// Find cloudflared on the system, or auto-download it to `~/.fleet/`.
+fn find_or_download_cloudflared() -> Result<String, TunnelError> {
+    if let Some(path) = find_cloudflared() {
+        return Ok(path);
+    }
+
+    eprintln!("[tunnel] cloudflared not found, downloading...");
+    download_cloudflared(None)
+}
+
+/// Same as above but with a progress callback for UI reporting.
+pub fn find_or_download_cloudflared_with_progress(
+    on_progress: Option<ProgressFn>,
+) -> Result<String, TunnelError> {
+    if let Some(path) = find_cloudflared() {
+        return Ok(path);
+    }
+
+    eprintln!("[tunnel] cloudflared not found, downloading...");
+    download_cloudflared(on_progress)
+}
+
+/// Check if `cloudflared` is already available and return the path.
+fn find_cloudflared() -> Option<String> {
+    // Check PATH first
+    #[cfg(unix)]
+    let which = "which";
+    #[cfg(not(unix))]
+    let which = "where";
+
+    if let Ok(output) = Command::new(which).arg("cloudflared").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(path);
+            }
+        }
+    }
+
+    // Check common install locations
+    let candidates = [
+        "/opt/homebrew/bin/cloudflared",
+        "/usr/local/bin/cloudflared",
+    ];
+    for path in candidates {
+        if std::path::Path::new(path).exists() {
+            return Some(path.to_string());
+        }
+    }
+
+    // Check ~/.fleet/cloudflared (auto-downloaded binary)
+    if let Some(path) = fleet_cloudflared_path() {
+        if path.exists() {
+            return Some(path.to_string_lossy().to_string());
+        }
+    }
+
+    None
+}
+
+/// Path where we store the auto-downloaded cloudflared binary.
+fn fleet_cloudflared_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| {
+        #[cfg(windows)]
+        { h.join(".fleet").join("cloudflared.exe") }
+        #[cfg(not(windows))]
+        { h.join(".fleet").join("cloudflared") }
+    })
+}
+
+/// Progress callback type for download reporting.
+pub type ProgressFn = Box<dyn Fn(u64, u64) + Send>;
+
+/// Download cloudflared binary to `~/.fleet/cloudflared`.
+/// Accepts an optional progress callback `on_progress(downloaded, total)`.
+pub fn download_cloudflared(on_progress: Option<ProgressFn>) -> Result<String, TunnelError> {
+    let dest = fleet_cloudflared_path()
+        .ok_or_else(|| TunnelError::DownloadFailed("cannot determine home directory".into()))?;
+
+    // Create ~/.fleet/ if needed.
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| TunnelError::DownloadFailed(format!("cannot create {}: {e}", parent.display())))?;
+    }
+
+    let url = download_url();
+    let is_tgz = url.ends_with(".tgz");
+
+    eprintln!("[tunnel] downloading from {url}");
+
+    // Download using reqwest (blocking) with streaming for progress.
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(300))
+        .build()
+        .map_err(|e| TunnelError::DownloadFailed(e.to_string()))?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .map_err(|e| TunnelError::DownloadFailed(e.to_string()))?;
+
+    if !response.status().is_success() {
+        return Err(TunnelError::DownloadFailed(format!(
+            "HTTP {}",
+            response.status()
+        )));
+    }
+
+    let total_size = response.content_length().unwrap_or(0);
+    let mut downloaded: u64 = 0;
+    let mut buf = Vec::with_capacity(total_size as usize);
+
+    let mut reader = response;
+    loop {
+        let mut chunk = vec![0u8; 64 * 1024]; // 64KB chunks
+        match std::io::Read::read(&mut reader, &mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                buf.extend_from_slice(&chunk[..n]);
+                downloaded += n as u64;
+                if let Some(ref cb) = on_progress {
+                    cb(downloaded, total_size);
+                }
+            }
+            Err(e) => return Err(TunnelError::DownloadFailed(e.to_string())),
+        }
+    }
+
+    eprintln!("[tunnel] downloaded {} bytes", buf.len());
+    let bytes = buf;
+
+    if is_tgz {
+        // macOS/Linux: .tgz archive containing a single `cloudflared` binary.
+        // Use the system `tar` command to preserve binary integrity (code signatures etc).
+        let tgz_path = dest.with_extension("tgz");
+        std::fs::write(&tgz_path, &bytes)
+            .map_err(|e| TunnelError::DownloadFailed(format!("write tgz failed: {e}")))?;
+
+        let parent = dest.parent().unwrap();
+        let output = Command::new("tar")
+            .args(["xzf"])
+            .arg(&tgz_path)
+            .arg("-C")
+            .arg(parent)
+            .output()
+            .map_err(|e| TunnelError::DownloadFailed(format!("tar extract failed: {e}")))?;
+
+        // Clean up the tgz.
+        let _ = std::fs::remove_file(&tgz_path);
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(TunnelError::DownloadFailed(format!("tar failed: {stderr}")));
+        }
+
+        // Verify the binary exists.
+        if !dest.exists() {
+            return Err(TunnelError::DownloadFailed(
+                "cloudflared binary not found after extraction".into(),
+            ));
+        }
+    } else {
+        // Linux/Windows: raw binary.
+        std::fs::write(&dest, &bytes)
+            .map_err(|e| TunnelError::DownloadFailed(format!("write failed: {e}")))?;
+    }
+
+    // Make executable on Unix.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755));
+    }
+
+    // Remove macOS quarantine attribute so Gatekeeper doesn't block execution.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("xattr")
+            .args(["-d", "com.apple.quarantine"])
+            .arg(&dest)
+            .output();
+    }
+
+    let path = dest.to_string_lossy().to_string();
+    eprintln!("[tunnel] installed cloudflared to {path}");
+    Ok(path)
+}
+
+/// Return the platform-specific download URL for cloudflared.
+fn download_url() -> String {
+    let base = "https://github.com/cloudflare/cloudflared/releases/latest/download";
+
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    { format!("{base}/cloudflared-darwin-arm64.tgz") }
+
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    { format!("{base}/cloudflared-darwin-amd64.tgz") }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    { format!("{base}/cloudflared-linux-amd64") }
+
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    { format!("{base}/cloudflared-linux-arm64") }
+
+    #[cfg(target_os = "windows")]
+    { format!("{base}/cloudflared-windows-amd64.exe") }
+}
+
+// ── URL extraction ──────────────────────────────────────────────────────────
+
+/// Extract a `https://...trycloudflare.com` URL from a cloudflared log line.
+fn extract_tunnel_url(line: &str) -> Option<String> {
+    for word in line.split_whitespace() {
+        let word = word.trim_matches('|').trim();
+        if word.starts_with("https://") && word.contains("trycloudflare.com") {
+            return Some(word.to_string());
+        }
+    }
+    // Also check for url= format
+    if let Some(pos) = line.find("url=https://") {
+        let start = pos + 4; // skip "url="
+        let url_part = &line[start..];
+        let end = url_part
+            .find(|c: char| c.is_whitespace())
+            .unwrap_or(url_part.len());
+        let url = &url_part[..end];
+        if url.contains("trycloudflare.com") {
+            return Some(url.to_string());
+        }
+    }
+    None
+}
+
+/// Check whether cloudflared is available on this system (without downloading).
+pub fn is_cloudflared_available() -> bool {
+    find_cloudflared().is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_url_from_box() {
+        let line =
+            "2024-01-01T00:00:00Z INF |  https://foo-bar-baz.trycloudflare.com  |";
+        assert_eq!(
+            extract_tunnel_url(line),
+            Some("https://foo-bar-baz.trycloudflare.com".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_url_from_registered_line() {
+        let line = "2024-01-01T00:00:00Z INF Registered tunnel connection connIndex=0 url=https://abc-123.trycloudflare.com";
+        assert_eq!(
+            extract_tunnel_url(line),
+            Some("https://abc-123.trycloudflare.com".to_string())
+        );
+    }
+
+    #[test]
+    fn no_url_in_line() {
+        assert_eq!(extract_tunnel_url("some random log line"), None);
+    }
+
+    #[test]
+    fn fleet_path_is_under_home() {
+        let path = fleet_cloudflared_path();
+        assert!(path.is_some());
+        let p = path.unwrap();
+        assert!(p.to_string_lossy().contains(".fleet"));
+        assert!(p.to_string_lossy().contains("cloudflared"));
+    }
+}

@@ -132,7 +132,11 @@ fn run_cli(
     timeout: Duration,
     tag: &str,
 ) -> Option<String> {
-    log_debug(&format!("[{tag}] spawning: {bin} {}", args.join(" ")));
+    // Only log the binary and flag names, not prompt content (which can be huge).
+    let safe_args: Vec<&str> = args.iter().map(|a| {
+        if a.len() > 80 { "<prompt…>" } else { a }
+    }).collect();
+    log_debug(&format!("[{tag}] spawning: {bin} {}", safe_args.join(" ")));
     let child = match Command::new(bin)
         .args(args)
         .stdout(Stdio::piped())
