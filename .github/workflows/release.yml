@@ -313,15 +313,15 @@ jobs:
           # Build PKG installer
           PKG_DIR="src-tauri/target/${{ matrix.rust_target }}/release/bundle/pkg"
           mkdir -p "$PKG_DIR"
-          PKG_SIGN_ARGS=""
+          PKG_SIGN_ARGS=()
           if [ -n "${APPLE_INSTALLER_IDENTITY:-}" ]; then
-            PKG_SIGN_ARGS="--sign $APPLE_INSTALLER_IDENTITY"
+            PKG_SIGN_ARGS=(--sign "$APPLE_INSTALLER_IDENTITY")
           fi
           pkgbuild --component "$APP" \
             --identifier "com.hoveychen.claw-fleet" \
             --version "$VERSION" \
             --install-location "/Applications" \
-            $PKG_SIGN_ARGS \
+            "${PKG_SIGN_ARGS[@]}" \
             "$PKG_DIR/claw-fleet-${{ matrix.fixed_suffix }}.pkg"
 
       # ── Collect artifacts ───────────────────────────────────────────────────
@@ -413,6 +413,10 @@ jobs:
           | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-windows.svg" width="24"> | Windows | ARM64 | `claw-fleet-windows-arm64-setup.exe` |
           | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-linux.svg" width="24"> | Linux | x86_64 | `claw-fleet-linux-x64.deb` / `claw-fleet-linux-x64.AppImage` |
           | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-linux.svg" width="24"> | Linux | ARM64 | `claw-fleet-linux-arm64.deb` / `claw-fleet-linux-arm64.AppImage` |
+
+          ### Mobile Companion
+
+          The Android companion app is released separately via `mobile-v*` tags. See the latest [mobile release](https://github.com/hoveychen/claw-fleet/releases?q=mobile) for the APK download. Scan the QR code in Desktop → Settings → Mobile to connect.
 
           ### `fleet` CLI (standalone binaries)
 

@@ -10,7 +10,7 @@ Supports **Claude Code**, **Cursor**, **OpenClaw**, and **Codex**.
 
 [![Release](https://img.shields.io/github/v/release/hoveychen/claw-fleet?style=flat-square&logo=github&color=d97757)](https://github.com/hoveychen/claw-fleet/releases/latest)
 [![License](https://img.shields.io/github/license/hoveychen/claw-fleet?style=flat-square&color=4a9eff)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey?style=flat-square)](https://github.com/hoveychen/claw-fleet/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Android-lightgrey?style=flat-square)](https://github.com/hoveychen/claw-fleet/releases/latest)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB?style=flat-square&logo=tauri)](https://tauri.app)
 [![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?style=flat-square&logo=typescript)](https://www.typescriptlang.org)
@@ -104,6 +104,8 @@ Claw Fleet can monitor sessions from multiple AI coding agents:
 
 **Your agents' memory, finally visible.** `CLAUDE.md` files and memory entries scattered across dozens of projects, indexed in one place. Browse, diff, promote to global scope.
 
+**Monitor from your phone.** The companion Android app connects to your desktop via a secure tunnel — scan a QR code and you're in. See live agent statuses, token speeds, and conversation history from anywhere. Stop a runaway agent from the couch.
+
 **Remote agents, local dashboard.** SSH into your cloud box and monitor remote agents alongside local ones. Auto-bootstraps itself on the remote side. No port forwarding, no VPN.
 
 **Agents that manage agents.** Install the Fleet Skill and your AI coding agent can check on — and stop — other running agents on its own.
@@ -126,6 +128,9 @@ Download the latest pre-built binary for your platform from the [Releases page](
 | <img src="docs/icon-windows.svg" width="24"> | Windows | ARM64 | [claw-fleet-windows-arm64-setup.exe](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-windows-arm64-setup.exe) |
 | <img src="docs/icon-linux.svg" width="24"> | Linux | x86\_64 | [claw-fleet-linux-x64.deb](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-linux-x64.deb) · [claw-fleet-linux-x64.AppImage](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-linux-x64.AppImage) |
 | <img src="docs/icon-linux.svg" width="24"> | Linux | ARM64 | [claw-fleet-linux-arm64.deb](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-linux-arm64.deb) · [claw-fleet-linux-arm64.AppImage](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-linux-arm64.AppImage) |
+| <img src="docs/icon-android.svg" width="24"> | Android | ARM64 / x86_64 | [claw-fleet-mobile.apk](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-mobile.apk) |
+
+> **Mobile app**: The Android companion app is released separately — look for the latest `mobile-v*` release on the [Releases page](https://github.com/hoveychen/claw-fleet/releases). Scan the QR code shown in Claw Fleet Desktop to connect.
 
 ### Prerequisites
 
@@ -179,6 +184,28 @@ Claw Fleet reads directly from Claude Code's local data directory (`~/.claude/`)
 4. **Token speed** — aggregates `usage.output_tokens` across the most recent messages and divides by elapsed time
 
 Everything runs in-process inside the Tauri Rust backend. The React frontend communicates via Tauri's IPC bridge.
+
+---
+
+## Mobile Companion App
+
+Claw Fleet ships with an Android companion app that lets you monitor your agents from your phone.
+
+**Features:**
+- Live agent statuses with token speed and context usage
+- Conversation history with thinking blocks, tool calls, and code highlights
+- Security audit events
+- Stop agents remotely
+- Dark / light theme, follows system setting
+
+**How to connect:**
+1. Open Claw Fleet Desktop and click the phone icon in the sidebar (or go to Settings → Mobile)
+2. Click "Enable Mobile Access" — this starts a secure Cloudflare tunnel
+3. Scan the QR code with the mobile app
+
+The mobile app is a read-only client (except for stop commands). All data flows through the desktop app's embedded HTTP server via the tunnel — no direct access to your filesystem.
+
+**Building from source:** See [`claw-fleet-mobile/README.md`](claw-fleet-mobile/README.md) for build instructions.
 
 ---
 
