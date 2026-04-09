@@ -52,7 +52,6 @@ jobs:
         run: |
           mkdir -p work
           gh release download "${{ steps.tag.outputs.tag }}" \
-            --pattern "*${{ matrix.arch_suffix }}*.dmg" \
             --pattern "*${{ matrix.arch_suffix }}*.pkg" \
             --dir work/ \
             --repo "${{ github.repository }}"
@@ -72,7 +71,7 @@ jobs:
           API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
           set -o pipefail
-          for artifact in work/*.dmg work/*.pkg; do
+          for artifact in work/*.pkg; do
             [ -f "$artifact" ] || continue
             echo "── Submitting $(basename "$artifact") for notarization..."
             xcrun notarytool submit "$artifact" \
@@ -117,7 +116,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for artifact in work/*.dmg work/*.pkg; do
+          for artifact in work/*.pkg; do
             [ -f "$artifact" ] || continue
             echo "Uploading $(basename "$artifact") → ${{ steps.tag.outputs.tag }}"
             gh release upload "${{ steps.tag.outputs.tag }}" "$artifact" \

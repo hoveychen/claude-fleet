@@ -104,17 +104,17 @@ if [[ -d "$APP_BUNDLE" ]]; then
   PKG_NAME="claw-fleet-${DEV_VERSION}.pkg"
   echo "==> Building PKG installer..."
   if [[ -n "$APPLE_INSTALLER_IDENTITY" ]]; then
-    pkgbuild --root "$APP_BUNDLE" \
+    pkgbuild --component "$APP_BUNDLE" \
       --identifier "com.hoveychen.claw-fleet" \
       --version "$DEV_VERSION" \
-      --install-location "/Applications/Claw Fleet.app" \
+      --install-location "/Applications" \
       --sign "$APPLE_INSTALLER_IDENTITY" \
       "$PKG_DIR/$PKG_NAME"
   else
-    pkgbuild --root "$APP_BUNDLE" \
+    pkgbuild --component "$APP_BUNDLE" \
       --identifier "com.hoveychen.claw-fleet" \
       --version "$DEV_VERSION" \
-      --install-location "/Applications/Claw Fleet.app" \
+      --install-location "/Applications" \
       "$PKG_DIR/$PKG_NAME"
   fi
   echo "==> PKG: $PKG_DIR/$PKG_NAME"
@@ -169,17 +169,17 @@ if [[ "$NOTARIZE" == true ]]; then
   rm -f "$PKG_DIR"/*.pkg
   PKG_NAME="claw-fleet-${DEV_VERSION}.pkg"
   if [[ -n "${APPLE_INSTALLER_IDENTITY:-}" ]]; then
-    pkgbuild --root "$APP_BUNDLE" \
+    pkgbuild --component "$APP_BUNDLE" \
       --identifier "com.hoveychen.claw-fleet" \
       --version "$DEV_VERSION" \
-      --install-location "/Applications/Claw Fleet.app" \
+      --install-location "/Applications" \
       --sign "$APPLE_INSTALLER_IDENTITY" \
       "$PKG_DIR/$PKG_NAME"
   else
-    pkgbuild --root "$APP_BUNDLE" \
+    pkgbuild --component "$APP_BUNDLE" \
       --identifier "com.hoveychen.claw-fleet" \
       --version "$DEV_VERSION" \
-      --install-location "/Applications/Claw Fleet.app" \
+      --install-location "/Applications" \
       "$PKG_DIR/$PKG_NAME"
   fi
 

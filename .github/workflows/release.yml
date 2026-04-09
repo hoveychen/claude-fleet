@@ -310,18 +310,6 @@ jobs:
               "$APP"
           fi
 
-          # Re-create DMG with signed app
-          DMG_DIR="src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg"
-          rm -f "$DMG_DIR"/*.dmg
-          DMG_STAGING=$(mktemp -d)
-          cp -R "$APP" "$DMG_STAGING/"
-          ln -s /Applications "$DMG_STAGING/Applications"
-          hdiutil create -volname "Claw Fleet" \
-            -srcfolder "$DMG_STAGING" \
-            -ov -format UDZO \
-            "$DMG_DIR/claw-fleet-${{ matrix.fixed_suffix }}.dmg"
-          rm -rf "$DMG_STAGING"
-
           # Build PKG installer
           PKG_DIR="src-tauri/target/${{ matrix.rust_target }}/release/bundle/pkg"
           mkdir -p "$PKG_DIR"
@@ -329,10 +317,10 @@ jobs:
           if [ -n "${APPLE_INSTALLER_IDENTITY:-}" ]; then
             PKG_SIGN_ARGS="--sign $APPLE_INSTALLER_IDENTITY"
           fi
-          pkgbuild --root "$APP" \
+          pkgbuild --component "$APP" \
             --identifier "com.hoveychen.claw-fleet" \
             --version "$VERSION" \
-            --install-location "/Applications/Claw Fleet.app" \
+            --install-location "/Applications" \
             $PKG_SIGN_ARGS \
             "$PKG_DIR/claw-fleet-${{ matrix.fixed_suffix }}.pkg"
 
@@ -343,10 +331,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist-artifacts
-          # DMG
-          cp src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg/claw-fleet-${{ matrix.fixed_suffix }}.dmg \
-             dist-artifacts/
-          # PKG
+          # PKG installer
           cp src-tauri/target/${{ matrix.rust_target }}/release/bundle/pkg/claw-fleet-${{ matrix.fixed_suffix }}.pkg \
              dist-artifacts/
           # Standalone fleet binary
@@ -422,8 +407,8 @@ jobs:
 
           | | Platform | Architecture | File |
           |---|---|---|---|
-          | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-apple.svg" width="24"> | macOS | Apple Silicon (M1/M2/M3/M4) | `claw-fleet-macos-arm64.pkg` / `.dmg` |
-          | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-apple.svg" width="24"> | macOS | Intel | `claw-fleet-macos-x64.pkg` / `.dmg` |
+          | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-apple.svg" width="24"> | macOS | Apple Silicon (M1/M2/M3/M4) | `claw-fleet-macos-arm64.pkg` |
+          | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-apple.svg" width="24"> | macOS | Intel | `claw-fleet-macos-x64.pkg` |
           | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-windows.svg" width="24"> | Windows | x64 | `claw-fleet-windows-x64-setup.exe` |
           | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-windows.svg" width="24"> | Windows | ARM64 | `claw-fleet-windows-arm64-setup.exe` |
           | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-linux.svg" width="24"> | Linux | x86_64 | `claw-fleet-linux-x64.deb` / `claw-fleet-linux-x64.AppImage` |
