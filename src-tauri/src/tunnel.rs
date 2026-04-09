@@ -202,7 +202,7 @@ fn find_cloudflared() -> Option<String> {
 
 /// Path where we store the auto-downloaded cloudflared binary.
 fn fleet_cloudflared_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| {
+    crate::session::real_home_dir().map(|h| {
         #[cfg(windows)]
         { h.join(".fleet").join("cloudflared.exe") }
         #[cfg(not(windows))]

@@ -2,7 +2,7 @@
 //!
 //! On first call (or when the cache is older than 24 hours), fetches the
 //! latest release from GitHub and writes the result to
-//! `~/.claude/fleet-version-check.json`.  Subsequent calls within the TTL
+//! `~/.fleet/fleet-version-check.json`.  Subsequent calls within the TTL
 //! window return the cached result instantly with no network I/O.
 
 use serde::{Deserialize, Serialize};
@@ -44,7 +44,7 @@ struct GithubRelease {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn cache_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join("fleet-version-check.json"))
+    crate::session::real_home_dir().map(|h| h.join(".fleet").join("fleet-version-check.json"))
 }
 
 fn now_secs() -> u64 {

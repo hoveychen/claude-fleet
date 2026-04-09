@@ -7,7 +7,7 @@
 //! silently ignored no matter how complex they look.
 //!
 //! Patterns can be overridden at runtime by placing a JSON file at
-//! `~/.claude/fleet-audit-patterns.json`.  When the file is absent or
+//! `~/.fleet/fleet-audit-patterns.json`.  When the file is absent or
 //! malformed, the compiled-in defaults are used.
 
 use std::sync::Mutex;
@@ -122,7 +122,7 @@ fn default_match_mode() -> MatchMode {
     MatchMode::Contains
 }
 
-/// Top-level schema for `~/.claude/fleet-audit-patterns.json`.
+/// Top-level schema for `~/.fleet/fleet-audit-patterns.json`.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ExternalPatternsFile {
     /// Schema version — currently 1.
@@ -474,7 +474,7 @@ static PATTERN_CACHE: Mutex<Option<PatternCache>> = Mutex::new(None);
 const CACHE_CHECK_INTERVAL_SECS: u64 = 30;
 
 fn patterns_file_path() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join("fleet-audit-patterns.json"))
+    crate::session::real_home_dir().map(|h| h.join(".fleet").join("fleet-audit-patterns.json"))
 }
 
 fn try_load_external(path: &std::path::Path) -> Option<(Vec<RuntimeRiskPattern>, Vec<RuntimeRiskPattern>, SystemTime)> {
@@ -683,7 +683,7 @@ pub fn extract_audit_events(
 /// Events from sessions that are no longer active get persisted here so the
 /// user can review historical audit data.
 ///
-/// File: `~/.claude/fleet-audit-history.json`
+/// File: `~/.fleet/fleet-audit-history.json`
 pub struct AuditHistory {
     events: Vec<AuditEvent>,
     /// Session IDs whose events are already persisted — used to avoid
@@ -698,7 +698,7 @@ const AUDIT_HISTORY_FILE: &str = "fleet-audit-history.json";
 const MAX_HISTORY_EVENTS: usize = 10_000;
 
 fn history_file_path() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join(AUDIT_HISTORY_FILE))
+    crate::session::real_home_dir().map(|h| h.join(".fleet").join(AUDIT_HISTORY_FILE))
 }
 
 impl AuditHistory {

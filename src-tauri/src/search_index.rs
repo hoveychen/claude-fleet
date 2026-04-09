@@ -34,11 +34,11 @@ pub struct SearchIndex {
 }
 
 impl SearchIndex {
-    /// Open (or create) the search database at `~/.claude/fleet-search.db`.
+    /// Open (or create) the search database at `~/.fleet/fleet-search.db`.
     pub fn open() -> Result<Self, String> {
-        let db_path = dirs::home_dir()
+        let db_path = crate::session::real_home_dir()
             .ok_or_else(|| "cannot determine home dir".to_string())?
-            .join(".claude")
+            .join(".fleet")
             .join("fleet-search.db");
         Self::open_at(&db_path)
     }

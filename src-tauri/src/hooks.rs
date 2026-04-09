@@ -13,7 +13,7 @@ use serde_json::{json, Map, Value};
 
 /// The shell command our hooks use.  Used as the identity marker when merging.
 const FLEET_HOOK_COMMAND: &str =
-    r#"sh -c 'cat >> "$HOME/.claude/fleet/hooks.jsonl"'"#;
+    r#"sh -c 'cat >> "$HOME/.fleet/hooks.jsonl"'"#;
 
 /// Event types we need hooks for.
 const FLEET_HOOK_EVENTS: &[&str] = &[
@@ -62,15 +62,15 @@ pub struct HookEvent {
 // ── Paths ────────────────────────────────────────────────────────────────────
 
 fn settings_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join("settings.json"))
+    crate::session::real_home_dir().map(|h| h.join(".claude").join("settings.json"))
 }
 
 pub fn hooks_events_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join("fleet").join("hooks.jsonl"))
+    crate::session::real_home_dir().map(|h| h.join(".fleet").join("hooks.jsonl"))
 }
 
 fn fleet_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join("fleet"))
+    crate::session::real_home_dir().map(|h| h.join(".fleet"))
 }
 
 // ── Plan (dry-run) ───────────────────────────────────────────────────────────
@@ -112,7 +112,7 @@ pub fn plan_hook_setup() -> HookSetupPlan {
 /// Merge Fleet hooks into settings.json.  Only touches the `hooks` key;
 /// all other settings are preserved byte-for-byte.
 pub fn apply_hook_setup() -> Result<(), String> {
-    // Ensure ~/.claude/fleet/ directory exists.
+    // Ensure ~/.fleet/ directory exists.
     if let Some(dir) = fleet_dir() {
         fs::create_dir_all(&dir).map_err(|e| format!("create fleet dir: {e}"))?;
     }
@@ -283,7 +283,7 @@ fn is_fleet_group(group: &Value) -> bool {
             arr.iter().any(|hook| {
                 hook.get("command")
                     .and_then(|c| c.as_str())
-                    .map(|c| c.contains("fleet/hooks.jsonl"))
+                    .map(|c| c.contains(".fleet/hooks.jsonl"))
                     .unwrap_or(false)
             })
         })

@@ -32,9 +32,9 @@ jobs:
       matrix:
         include:
           - name: Apple Silicon
-            arch_pattern: '*macos-arm64*.dmg'
+            arch_suffix: macos-arm64
           - name: Intel
-            arch_pattern: '*macos-x64*.dmg'
+            arch_suffix: macos-x64
 
     steps:
       - name: Resolve tag
@@ -43,21 +43,21 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
           else
-            # workflow_run: head_branch contains the tag name when triggered by tag push
             echo "tag=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Download DMG from release
+      - name: Download artifacts from release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p dmg-work
+          mkdir -p work
           gh release download "${{ steps.tag.outputs.tag }}" \
-            --pattern "${{ matrix.arch_pattern }}" \
-            --dir dmg-work/ \
+            --pattern "*${{ matrix.arch_suffix }}*.dmg" \
+            --pattern "*${{ matrix.arch_suffix }}*.pkg" \
+            --dir work/ \
             --repo "${{ github.repository }}"
           echo "Downloaded:"
-          ls -lh dmg-work/
+          ls -lh work/
 
       - name: Decode API key
         env:
@@ -72,9 +72,10 @@ jobs:
           API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
           set -o pipefail
-          for dmg in dmg-work/*.dmg; do
-            echo "── Submitting $(basename "$dmg") for notarization..."
-            xcrun notarytool submit "$dmg" \
+          for artifact in work/*.dmg work/*.pkg; do
+            [ -f "$artifact" ] || continue
+            echo "── Submitting $(basename "$artifact") for notarization..."
+            xcrun notarytool submit "$artifact" \
               --key "private_keys/AuthKey_${API_KEY_ID}.p8" \
               --key-id "$API_KEY_ID" \
               --issuer "$API_ISSUER_ID" \
@@ -83,10 +84,8 @@ jobs:
               2>&1 | tee notarize-output.log
             NOTARY_EXIT=$?
 
-            # Extract submission ID for log fetching
             SUB_ID=$(grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' notarize-output.log | head -1)
 
-            # Check for rejection or failure (notarytool may exit 0 even on Rejected)
             if [ $NOTARY_EXIT -ne 0 ] || grep -q "status: Rejected\|status: Invalid" notarize-output.log; then
               echo "── Notarization failed or rejected. Fetching detailed log..."
               if [ -n "$SUB_ID" ]; then
@@ -109,18 +108,19 @@ jobs:
               exit 1
             fi
 
-            echo "── Stapling $(basename "$dmg")..."
-            xcrun stapler staple "$dmg"
-            echo "── Done: $(basename "$dmg")"
+            echo "── Stapling $(basename "$artifact")..."
+            xcrun stapler staple "$artifact"
+            echo "── Done: $(basename "$artifact")"
           done
 
-      - name: Replace release asset with notarized DMG
+      - name: Replace release assets with notarized versions
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for dmg in dmg-work/*.dmg; do
-            echo "Uploading $(basename "$dmg") → ${{ steps.tag.outputs.tag }}"
-            gh release upload "${{ steps.tag.outputs.tag }}" "$dmg" \
+          for artifact in work/*.dmg work/*.pkg; do
+            [ -f "$artifact" ] || continue
+            echo "Uploading $(basename "$artifact") → ${{ steps.tag.outputs.tag }}"
+            gh release upload "${{ steps.tag.outputs.tag }}" "$artifact" \
               --clobber \
               --repo "${{ github.repository }}"
           done

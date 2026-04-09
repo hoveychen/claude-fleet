@@ -108,7 +108,7 @@ fn resolve_binary(name: &str, extra_paths: &[&str]) -> Option<String> {
 
     for tpl in extra_paths {
         let expanded = if tpl.starts_with("~/") {
-            if let Some(home) = dirs::home_dir() {
+            if let Some(home) = crate::session::real_home_dir() {
                 home.join(&tpl[2..]).to_string_lossy().to_string()
             } else {
                 continue;
@@ -415,7 +415,7 @@ fn parse_cursor_models(raw: &str) -> Vec<LlmModel> {
 
 /// Read `~/.codex/models_cache.json` and return non-hidden models.
 fn parse_codex_models_cache() -> Option<Vec<LlmModel>> {
-    let path = dirs::home_dir()?.join(".codex").join("models_cache.json");
+    let path = crate::session::real_home_dir()?.join(".codex").join("models_cache.json");
     let content = std::fs::read_to_string(path).ok()?;
     let val: serde_json::Value = serde_json::from_str(&content).ok()?;
 

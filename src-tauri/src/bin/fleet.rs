@@ -1181,9 +1181,9 @@ fn cmd_serve(port: u16, token: String) {
 
     // Open the full-text search index (stored on the remote host).
     let search_index = {
-        let db_path = dirs::home_dir()
+        let db_path = claw_fleet_lib::session::real_home_dir()
             .expect("cannot determine home dir")
-            .join(".claude")
+            .join(".fleet")
             .join("fleet-search.db");
         SearchIndex::open_at(&db_path).unwrap_or_else(|e| {
             eprintln!("[fleet serve] search index open failed, retrying fresh: {e}");

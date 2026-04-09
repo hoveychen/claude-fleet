@@ -39,7 +39,7 @@ struct SnapshotEntry {
 }
 
 fn snapshot_path() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join("claw-fleet-usage-history.json"))
+    crate::session::real_home_dir().map(|h| h.join(".fleet").join("claw-fleet-usage-history.json"))
 }
 
 fn normalize_snap(snap: MetricSnap) -> MetricSnap {
@@ -161,7 +161,7 @@ pub fn read_keychain_credentials() -> Result<(String, String), String> {
     let raw = if out.status.success() {
         String::from_utf8(out.stdout).map_err(|e| e.to_string())?
     } else {
-        let cred_path = dirs::home_dir()
+        let cred_path = crate::session::real_home_dir()
             .ok_or("No home dir")?
             .join(".claude")
             .join(".credentials.json");
@@ -186,7 +186,7 @@ pub fn read_keychain_credentials() -> Result<(String, String), String> {
 
 #[cfg(not(target_os = "macos"))]
 pub fn read_keychain_credentials() -> Result<(String, String), String> {
-    let cred_path = dirs::home_dir()
+    let cred_path = crate::session::real_home_dir()
         .ok_or("No home dir")?
         .join(".claude")
         .join(".credentials.json");

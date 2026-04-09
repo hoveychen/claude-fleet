@@ -42,7 +42,7 @@ impl OpenClawSource {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn get_openclaw_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".openclaw"))
+    crate::session::real_home_dir().map(|h| h.join(".openclaw"))
 }
 
 fn get_agents_dir() -> Option<PathBuf> {
@@ -678,7 +678,7 @@ pub struct OpenClawUsageInfo {
 }
 
 fn find_openclaw_binary() -> Option<PathBuf> {
-    let home = dirs::home_dir();
+    let home = crate::session::real_home_dir();
 
     // Check well-known installation paths first (GUI apps often lack full PATH).
     let mut candidates: Vec<PathBuf> = vec![
@@ -724,7 +724,7 @@ fn augmented_path() -> String {
         "/opt/homebrew/bin".to_string(),
         "/usr/local/bin".to_string(),
     ];
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = crate::session::real_home_dir() {
         let h = home.display().to_string();
         // nvm
         if let Ok(nvm_dir) = std::env::var("NVM_DIR") {

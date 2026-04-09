@@ -122,11 +122,11 @@ pub struct ReportStore {
 }
 
 impl ReportStore {
-    /// Open (or create) the report database at `~/.claude/fleet-reports.db`.
+    /// Open (or create) the report database at `~/.fleet/fleet-reports.db`.
     pub fn open() -> Result<Self, String> {
-        let db_path = dirs::home_dir()
+        let db_path = crate::session::real_home_dir()
             .ok_or_else(|| "cannot determine home dir".to_string())?
-            .join(".claude")
+            .join(".fleet")
             .join("fleet-reports.db");
         Self::open_at(&db_path)
     }
@@ -812,7 +812,7 @@ fn collect_existing_rules(workspace_paths: &[String]) -> String {
     };
 
     // 1. Global ~/.claude/CLAUDE.md
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = crate::session::real_home_dir() {
         let global = home.join(".claude").join("CLAUDE.md");
         if let Ok(content) = std::fs::read_to_string(&global) {
             if !content.trim().is_empty() {
@@ -1016,7 +1016,7 @@ pub fn generate_lessons(
 
 /// Append a single lesson to `~/.claude/CLAUDE.md`.
 pub fn append_lesson_to_claude_md(lesson: &Lesson) -> Result<(), String> {
-    let path = dirs::home_dir()
+    let path = crate::session::real_home_dir()
         .ok_or_else(|| "cannot determine home dir".to_string())?
         .join(".claude")
         .join("CLAUDE.md");
@@ -1047,7 +1047,7 @@ pub fn append_lesson_to_claude_md(lesson: &Lesson) -> Result<(), String> {
 pub fn scan_sessions_for_date(date: &str) -> Vec<crate::session::SessionInfo> {
     use crate::session::decode_workspace_path_with_parts;
 
-    let home = match dirs::home_dir() {
+    let home = match crate::session::real_home_dir() {
         Some(h) => h,
         None => return vec![],
     };

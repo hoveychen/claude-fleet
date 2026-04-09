@@ -2,17 +2,34 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- ── App Sandbox (required for Mac App Store, testing now) ── -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- ── Runtime: JIT / unsigned memory (Tauri WebView needs these) ── -->
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-dyld-environment-variables</key>
     <true/>
+
+    <!-- ── Network ── -->
     <key>com.apple.security.network.client</key>
     <true/>
     <key>com.apple.security.network.server</key>
     <true/>
+
+    <!-- ── User-selected files (open/save dialogs) ── -->
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
+
+    <!-- ── Temporary exceptions: absolute paths ── -->
+    <!-- home-relative-path resolves to the sandbox container, not the real home. -->
+    <!-- absolute-path with /Users/ allows access to the real user directories. -->
+    <key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
+    <array>
+        <string>/Users/</string>
+    </array>
 </dict>
 </plist>

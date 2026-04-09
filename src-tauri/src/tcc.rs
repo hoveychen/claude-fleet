@@ -14,7 +14,7 @@ const TCC_PROTECTED_DIRS: &[&str] = &[
 /// Check if a path is inside a macOS TCC-protected directory.
 #[cfg(target_os = "macos")]
 fn check_tcc_path(path: &Path) -> bool {
-    let Some(home) = dirs::home_dir() else { return false };
+    let Some(home) = crate::session::real_home_dir() else { return false };
     for dir_name in TCC_PROTECTED_DIRS {
         let protected = home.join(dir_name);
         if path == protected || path.starts_with(&protected) {

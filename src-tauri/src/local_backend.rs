@@ -101,8 +101,8 @@ impl LocalBackend {
             SearchIndex::open().unwrap_or_else(|e| {
                 log_debug(&format!("search index open failed, retrying fresh: {e}"));
                 // If the DB is corrupt, delete and retry.
-                if let Some(home) = dirs::home_dir() {
-                    let _ = fs::remove_file(home.join(".claude").join("fleet-search.db"));
+                if let Some(home) = crate::session::real_home_dir() {
+                    let _ = fs::remove_file(home.join(".fleet").join("fleet-search.db"));
                 }
                 SearchIndex::open().expect("search index open failed twice")
             }),
@@ -112,8 +112,8 @@ impl LocalBackend {
         let report_store = Arc::new(Mutex::new(
             crate::daily_report::ReportStore::open().unwrap_or_else(|e| {
                 log_debug(&format!("report store open failed, retrying fresh: {e}"));
-                if let Some(home) = dirs::home_dir() {
-                    let _ = fs::remove_file(home.join(".claude").join("fleet-reports.db"));
+                if let Some(home) = crate::session::real_home_dir() {
+                    let _ = fs::remove_file(home.join(".fleet").join("fleet-reports.db"));
                 }
                 crate::daily_report::ReportStore::open().expect("report store open failed twice")
             }),
@@ -788,7 +788,7 @@ impl Backend for LocalBackend {
 
     fn check_setup(&self) -> crate::backend::SetupStatus {
         let (cli_installed, cli_path) = crate::check_cli_installed();
-        let claude_dir_exists = dirs::home_dir()
+        let claude_dir_exists = crate::session::real_home_dir()
             .map(|h| h.join(".claude").is_dir())
             .unwrap_or(false);
         let sessions = self.sessions.lock().unwrap().clone();

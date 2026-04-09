@@ -82,7 +82,7 @@ fn get_codex_dir() -> Option<PathBuf> {
     if let Ok(codex_home) = std::env::var("CODEX_HOME") {
         return Some(PathBuf::from(codex_home));
     }
-    dirs::home_dir().map(|h| h.join(".codex"))
+    crate::session::real_home_dir().map(|h| h.join(".codex"))
 }
 
 fn get_sessions_dir() -> Option<PathBuf> {
@@ -1719,7 +1719,7 @@ pub struct CodexUsageItem {
 
 /// Locate the Codex binary shipped inside the OpenAI ChatGPT VSCode/Cursor extension.
 fn find_codex_binary() -> Option<std::path::PathBuf> {
-    let home = dirs::home_dir()?;
+    let home = crate::session::real_home_dir()?;
 
     // Check Cursor and VSCode extension directories
     let ext_dirs = [

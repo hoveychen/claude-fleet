@@ -19,14 +19,14 @@ pub const CURSOR_URI_PREFIX: &str = "cursor://";
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 pub fn get_cursor_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".cursor"))
+    crate::session::real_home_dir().map(|h| h.join(".cursor"))
 }
 
 /// Path to Cursor's main SQLite KV store.
 fn state_vscdb_path() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        dirs::home_dir().map(|h| {
+        crate::session::real_home_dir().map(|h| {
             h.join("Library")
                 .join("Application Support")
                 .join("Cursor")
@@ -47,7 +47,7 @@ fn state_vscdb_path() -> Option<PathBuf> {
     }
     #[cfg(target_os = "linux")]
     {
-        dirs::home_dir().map(|h| {
+        crate::session::real_home_dir().map(|h| {
             h.join(".config")
                 .join("Cursor")
                 .join("User")

@@ -10,7 +10,7 @@
 //!    new rules without an app restart.
 //!
 //! **Fallback chain** (highest priority first):
-//!   `~/.claude/fleet-audit-patterns.json`  (user override / auto-updated)
+//!   `~/.fleet/fleet-audit-patterns.json`  (user override / auto-updated)
 //!   → bundled `resources/audit-patterns.json` (shipped with the app binary)
 //!   → compiled-in Rust defaults (hardcoded in `audit.rs`)
 
@@ -38,7 +38,7 @@ static STOP_FLAG: AtomicBool = AtomicBool::new(false);
 
 /// User-local patterns file (highest priority, also the update target).
 fn local_patterns_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join("fleet-audit-patterns.json"))
+    crate::session::real_home_dir().map(|h| h.join(".fleet").join("fleet-audit-patterns.json"))
 }
 
 // ── Version reading ─────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ fn bundled_version(app_handle: &tauri::AppHandle) -> u32 {
 // ── Bootstrap: ensure local file exists ─────────────────────────────────────
 
 /// On first run (no local file), copy the bundled resource to
-/// `~/.claude/fleet-audit-patterns.json` so the audit module has something
+/// `~/.fleet/fleet-audit-patterns.json` so the audit module has something
 /// to load without waiting for the first remote check.
 pub fn bootstrap_patterns(app_handle: &tauri::AppHandle) {
     use tauri::Manager;

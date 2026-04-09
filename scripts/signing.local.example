@@ -1,0 +1,10 @@
+# macOS code signing & notarization config (gitignored via *.local)
+# Copy this file to scripts/signing.local and fill in your values.
+
+APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAM_ID)"
+APPLE_INSTALLER_IDENTITY="Developer ID Installer: Your Name (TEAM_ID)"
+APP_STORE_CONNECT_KEY_ID="YOUR_KEY_ID"
+APP_STORE_CONNECT_ISSUER_ID="YOUR_ISSUER_ID"
+
+# Base64-encoded .p8 API key (paste output of: base64 -i AuthKey_XXX.p8)
+APP_STORE_CONNECT_KEY="BASE64_ENCODED_P8_KEY"

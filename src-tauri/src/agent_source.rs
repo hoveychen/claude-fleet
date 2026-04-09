@@ -150,7 +150,7 @@ pub trait AgentSource: Send + Sync {
 // ── Source registry & configuration ─────────────────────────────────────────
 
 /// Per-source enable/disable config.
-/// Stored in `~/.claude/fleet-sources.json`.
+/// Stored in `~/.fleet/fleet-sources.json`.
 ///
 /// ```json
 /// {
@@ -174,7 +174,7 @@ pub struct SourceEntry {
 }
 
 impl SourcesConfig {
-    /// Read the config from `~/.claude/fleet-sources.json`.
+    /// Read the config from `~/.fleet/fleet-sources.json`.
     /// Returns default (all enabled) if the file is missing or unparseable.
     pub fn load() -> Self {
         let Some(path) = config_path() else {
@@ -186,7 +186,7 @@ impl SourcesConfig {
         }
     }
 
-    /// Write the config to `~/.claude/fleet-sources.json`.
+    /// Write the config to `~/.fleet/fleet-sources.json`.
     pub fn save(&self) -> Result<(), String> {
         let path = config_path().ok_or("Cannot determine config path")?;
         let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
@@ -221,7 +221,7 @@ impl SourcesConfig {
 }
 
 fn config_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join("fleet-sources.json"))
+    crate::session::real_home_dir().map(|h| h.join(".fleet").join("fleet-sources.json"))
 }
 
 /// Info about a single agent source exposed to the frontend.
@@ -239,7 +239,7 @@ pub fn get_sources_config_local() -> Vec<SourceInfo> {
 
     let all_sources: Vec<(&str, bool)> = vec![
         ("claude-code", {
-            let home = dirs::home_dir();
+            let home = crate::session::real_home_dir();
             let cli_exists = {
                 #[cfg(unix)]
                 { std::process::Command::new("which").arg("claude").output().map_or(false, |o| o.status.success()) }
@@ -249,10 +249,10 @@ pub fn get_sources_config_local() -> Vec<SourceInfo> {
             cli_exists || home.as_ref().map_or(false, |h| h.join(".claude").is_dir())
         }),
         ("cursor", {
-            dirs::home_dir().map_or(false, |h| h.join(".cursor").is_dir())
+            crate::session::real_home_dir().map_or(false, |h| h.join(".cursor").is_dir())
         }),
         ("openclaw", {
-            let home = dirs::home_dir();
+            let home = crate::session::real_home_dir();
             home.as_ref().map_or(false, |h| h.join(".openclaw").is_dir())
                 || {
                     #[cfg(unix)]
@@ -262,7 +262,7 @@ pub fn get_sources_config_local() -> Vec<SourceInfo> {
                 }
         }),
         ("codex", {
-            let home = dirs::home_dir();
+            let home = crate::session::real_home_dir();
             home.as_ref().map_or(false, |h| h.join(".codex").is_dir())
                 || {
                     #[cfg(unix)]

@@ -85,8 +85,32 @@ pub struct SessionInfo {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/// Returns the real user home directory, bypassing sandbox container redirection.
+///
+/// In a sandboxed macOS app, `dirs::home_dir()` returns the container path
+/// (`~/Library/Containers/<id>/Data/`).  This function uses `getpwuid` to
+/// obtain the real home from the passwd database so that `~/.claude/`,
+/// `~/.fleet/`, `~/.ssh/` etc. resolve to the actual user directories.
+pub fn real_home_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::CStr;
+        let pw = unsafe { libc::getpwuid(libc::getuid()) };
+        if !pw.is_null() {
+            let home = unsafe { CStr::from_ptr((*pw).pw_dir) };
+            return Some(PathBuf::from(home.to_string_lossy().into_owned()));
+        }
+    }
+    dirs::home_dir()
+}
+
 pub fn get_claude_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude"))
+    real_home_dir().map(|h| h.join(".claude"))
+}
+
+/// Fleet's own data directory: `~/.fleet/`.
+pub fn get_fleet_dir() -> Option<PathBuf> {
+    real_home_dir().map(|h| h.join(".fleet"))
 }
 
 #[cfg(unix)]

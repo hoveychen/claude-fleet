@@ -455,7 +455,7 @@ fn emit_progress(app: &AppHandle, step: &str, done: bool, error: Option<&str>) {
 // ── Saved connections persistence ────────────────────────────────────────────
 
 fn connections_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join("fleet-connections.json"))
+    crate::session::real_home_dir().map(|h| h.join(".fleet").join("fleet-connections.json"))
 }
 
 pub fn load_saved_connections() -> Vec<RemoteConnection> {
@@ -555,7 +555,7 @@ fn scp_target(conn: &RemoteConnection) -> String {
 /// List SSH config profile (Host) names from ~/.ssh/config.
 #[tauri::command]
 pub fn list_ssh_profiles() -> Vec<String> {
-    let Some(config_path) = dirs::home_dir().map(|h| h.join(".ssh").join("config")) else {
+    let Some(config_path) = crate::session::real_home_dir().map(|h| h.join(".ssh").join("config")) else {
         return vec![];
     };
     let Ok(content) = std::fs::read_to_string(&config_path) else {

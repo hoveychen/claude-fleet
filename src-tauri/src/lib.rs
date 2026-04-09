@@ -49,8 +49,8 @@ fn load_png_as_tray_icon(bytes: &[u8]) -> tauri::image::Image<'static> {
 
 #[tauri::command]
 fn get_log_path() -> String {
-    dirs::home_dir()
-        .map(|h| h.join(".claude").join("claw-fleet-debug.log").to_string_lossy().to_string())
+    session::real_home_dir()
+        .map(|h| h.join(".fleet").join("claw-fleet-debug.log").to_string_lossy().to_string())
         .unwrap_or_else(|| "unknown".to_string())
 }
 
@@ -65,8 +65,8 @@ fn check_app_version() -> version_check::VersionCheckResult {
 }
 
 fn log_debug(msg: &str) {
-    if let Some(home) = dirs::home_dir() {
-        let log_path = home.join(".claude").join("claw-fleet-debug.log");
+    if let Some(home) = session::real_home_dir() {
+        let log_path = home.join(".fleet").join("claw-fleet-debug.log");
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
         let line = format!("[{timestamp}] {msg}\n");
         let _ = std::fs::OpenOptions::new()
@@ -527,7 +527,7 @@ async fn check_setup_status(state: tauri::State<'_, AppState>) -> Result<backend
         b.list_sessions()
     };
     let (cli_installed, cli_path) = check_cli_installed();
-    let claude_dir_exists = dirs::home_dir()
+    let claude_dir_exists = session::real_home_dir()
         .map(|h| h.join(".claude").is_dir())
         .unwrap_or(false);
     let detected_tools = detect_installed_tools(&sessions);
@@ -547,7 +547,7 @@ async fn check_setup_status(state: tauri::State<'_, AppState>) -> Result<backend
 /// Detect which Claude-related tools are installed on the local machine.
 /// Used by LocalBackend and fleet serve.
 pub fn detect_installed_tools(sessions: &[SessionInfo]) -> backend::DetectedTools {
-    let home = dirs::home_dir();
+    let home = session::real_home_dir();
 
     // CLI: already checked via PATH / common paths
     let (cli, _) = check_cli_installed();
@@ -648,8 +648,8 @@ pub fn check_cli_installed() -> (bool, Option<String>) {
 
     // Also check common install locations
     let common_paths = [
-        dirs::home_dir().map(|h| h.join(".npm-global").join("bin").join("claude")),
-        dirs::home_dir().map(|h| h.join(".local").join("bin").join("claude")),
+        session::real_home_dir().map(|h| h.join(".npm-global").join("bin").join("claude")),
+        session::real_home_dir().map(|h| h.join(".local").join("bin").join("claude")),
         Some(std::path::PathBuf::from("/usr/local/bin/claude")),
         Some(std::path::PathBuf::from("/opt/homebrew/bin/claude")),
     ];
@@ -1802,7 +1802,7 @@ pub fn run() {
                 let locale = state.locale.clone();
                 let llm_cfg = state.llm_config.clone();
 
-                // Build the agent source registry from config (~/.claude/fleet-sources.json).
+                // Build the agent source registry from config (~/.fleet/fleet-sources.json).
                 let sources = agent_source::build_sources();
 
                 let local = local_backend::LocalBackend::new(
