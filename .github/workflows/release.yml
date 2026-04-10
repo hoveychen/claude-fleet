@@ -299,6 +299,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ''
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Static-link OpenSSL so signed macOS app doesn't depend on Homebrew dylibs
+          # (macOS rejects dylibs with different Team IDs)
+          OPENSSL_STATIC: '1'
         with:
           args: ${{ matrix.args }}
           includeUpdaterJson: false

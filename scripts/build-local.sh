@@ -37,6 +37,10 @@ DD=$((10#$(date +%d)))   # strip leading zero: 09 → 9
 DEV_VERSION="${YY}.${MM}.${DD}-dev.$(date +%s)"
 echo "==> Dev version: $DEV_VERSION"
 
+# Static-link OpenSSL so the signed app doesn't depend on Homebrew's dylibs
+# (macOS code signing rejects dylibs with different Team IDs)
+export OPENSSL_STATIC=1
+
 CARGO_TOML="src-tauri/Cargo.toml"
 CARGO_TOML_BAK="${CARGO_TOML}.bak"
 

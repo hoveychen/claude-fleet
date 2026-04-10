@@ -39,7 +39,8 @@
         {
           "cameraPermission": "Allow Claw Fleet to access the camera for QR code scanning."
         }
-      ]
+      ],
+      "./plugins/withAndroidMinify"
     ]
   }
 }

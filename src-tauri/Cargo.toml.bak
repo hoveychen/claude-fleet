@@ -1,6 +1,6 @@
 [package]
 name = "claw-fleet"
-version = "26.4.10-dev.1775819738"
+version = "26.3.28-dev.1774688608"
 description = "Claw Fleet - Monitor all Claude sessions"
 authors = ["hoveychen"]
 license = "AGPL-3.0-only"
