@@ -53,6 +53,7 @@ fn local_version(path: &PathBuf) -> u32 {
         .unwrap_or(0)
 }
 
+#[cfg(feature = "gui")]
 /// Read the version from the bundled resource file.  Returns 0 if absent.
 fn bundled_version(app_handle: &tauri::AppHandle) -> u32 {
     use tauri::Manager;
@@ -68,6 +69,7 @@ fn bundled_version(app_handle: &tauri::AppHandle) -> u32 {
 
 // ── Bootstrap: ensure local file exists ─────────────────────────────────────
 
+#[cfg(feature = "gui")]
 /// On first run (no local file), copy the bundled resource to
 /// `~/.fleet/fleet-audit-patterns.json` so the audit module has something
 /// to load without waiting for the first remote check.

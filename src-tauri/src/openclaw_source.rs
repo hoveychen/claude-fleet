@@ -571,7 +571,7 @@ impl AgentSource for OpenClawSource {
     }
 
     fn kill_pid(&self, pid: u32) -> Result<(), String> {
-        crate::local_backend::kill_pid_impl(pid)
+        crate::session::kill_pid_impl(pid)
     }
 
     fn kill_workspace(&self, _workspace_path: &str) -> Result<(), String> {
@@ -763,7 +763,7 @@ fn augmented_path() -> String {
 /// Fetch OpenClaw account info (providers, model, version) via `openclaw models status --json`.
 pub async fn fetch_openclaw_account_info() -> Result<OpenClawAccountInfo, String> {
     let bin = find_openclaw_binary().ok_or("OpenClaw binary not found")?;
-    tauri::async_runtime::spawn_blocking(move || fetch_openclaw_account_blocking_impl(&bin))
+    tokio::task::spawn_blocking(move || fetch_openclaw_account_blocking_impl(&bin))
         .await
         .map_err(|e| format!("join error: {e}"))?
 }
@@ -863,7 +863,7 @@ fn fetch_openclaw_account_blocking_impl(bin: &Path) -> Result<OpenClawAccountInf
 /// Fetch OpenClaw usage info (session token counts) via `openclaw status --json`.
 pub async fn fetch_openclaw_usage() -> Result<OpenClawUsageInfo, String> {
     let bin = find_openclaw_binary().ok_or("OpenClaw binary not found")?;
-    tauri::async_runtime::spawn_blocking(move || fetch_openclaw_usage_blocking_impl(&bin))
+    tokio::task::spawn_blocking(move || fetch_openclaw_usage_blocking_impl(&bin))
         .await
         .map_err(|e| format!("join error: {e}"))?
 }

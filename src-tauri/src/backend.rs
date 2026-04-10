@@ -278,6 +278,7 @@ pub trait Backend: Send + Sync {
 
 // ── Shared watch state ───────────────────────────────────────────────────────
 
+#[cfg(feature = "gui")]
 /// Tracks which session file is currently being watched (tailed) for live
 /// updates.  Used by both `LocalBackend` and `RemoteBackend`.
 pub(crate) struct WatchState {
@@ -285,6 +286,7 @@ pub(crate) struct WatchState {
     pub offset: std::sync::Mutex<u64>,
 }
 
+#[cfg(feature = "gui")]
 impl WatchState {
     pub fn new() -> Self {
         Self {
@@ -308,12 +310,14 @@ impl WatchState {
     }
 }
 
+#[cfg(feature = "gui")]
 /// No-op placeholder used before the real backend is initialised in
 /// `tauri::Builder::setup`.  Needed because `AppState` must be `manage()`d
 /// before `setup()` runs, but `AppHandle` (required by `LocalBackend`) is only
 /// available inside `setup()`.
 pub(crate) struct NullBackend;
 
+#[cfg(feature = "gui")]
 impl Backend for NullBackend {
     fn list_sessions(&self) -> Vec<SessionInfo> {
         vec![]
@@ -555,6 +559,7 @@ mod tests {
     // ── WatchState tests ────────────────────────────────────────────────────
 
     #[test]
+    #[cfg(feature = "gui")]
     fn watch_state_lifecycle() {
         let ws = WatchState::new();
         assert!(ws.current_path().is_none());
@@ -571,6 +576,7 @@ mod tests {
     // ── NullBackend tests ───────────────────────────────────────────────────
 
     #[test]
+    #[cfg(feature = "gui")]
     fn null_backend_returns_defaults() {
         let nb = NullBackend;
         assert!(nb.list_sessions().is_empty());

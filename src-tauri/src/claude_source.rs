@@ -97,11 +97,11 @@ impl AgentSource for ClaudeCodeSource {
     }
 
     fn kill_pid(&self, pid: u32) -> Result<(), String> {
-        crate::local_backend::kill_pid_impl(pid)
+        crate::session::kill_pid_impl(pid)
     }
 
     fn kill_workspace(&self, workspace_path: &str) -> Result<(), String> {
-        crate::local_backend::kill_workspace_impl(workspace_path)
+        crate::session::kill_workspace_impl(workspace_path)
     }
 
     fn list_memories(&self) -> Vec<WorkspaceMemory> {

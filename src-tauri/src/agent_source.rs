@@ -353,6 +353,18 @@ pub fn find_source_for_path<'a>(
     None
 }
 
+// ── Shared helpers ──────────────────────────────────────────────────────────
+
+/// Fetch usage summaries from all available sources via trait dispatch.
+/// All network I/O happens here, outside any Mutex guard.
+pub fn fetch_usage_summaries_from_sources(sources: &[Box<dyn AgentSource>]) -> Vec<SourceUsageSummary> {
+    sources
+        .iter()
+        .filter(|s| s.is_available())
+        .filter_map(|s| s.usage_summary())
+        .collect()
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

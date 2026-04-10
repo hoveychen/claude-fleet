@@ -1657,7 +1657,7 @@ impl AgentSource for CodexSource {
     }
 
     fn kill_pid(&self, pid: u32) -> Result<(), String> {
-        crate::local_backend::kill_pid_impl(pid)
+        crate::session::kill_pid_impl(pid)
     }
 
     fn fetch_account(&self) -> Result<Value, String> {
@@ -1782,7 +1782,7 @@ pub async fn fetch_codex_usage() -> Result<CodexUsageItem, String> {
 
     // Run blocking I/O in a background thread to avoid blocking the async runtime.
     let result: Result<CodexUsageItem, String> =
-        tauri::async_runtime::spawn_blocking(move || fetch_codex_usage_blocking_impl(&bin))
+        tokio::task::spawn_blocking(move || fetch_codex_usage_blocking_impl(&bin))
             .await
             .map_err(|e| format!("join error: {e}"))?;
     result

@@ -1390,7 +1390,7 @@ fn cmd_serve(port: u16, token: String) {
             }
 
             "/usage_summaries" => {
-                let summaries = claw_fleet_lib::local_backend::fetch_usage_summaries_from_sources(&sources);
+                let summaries = claw_fleet_lib::agent_source::fetch_usage_summaries_from_sources(&sources);
                 let body = serde_json::to_string(&summaries).unwrap_or_default();
                 let _ = request.respond(
                     tiny_http::Response::from_string(body).with_header(json_header),

@@ -51,9 +51,9 @@ rm -f "${CARGO_TOML}.tmp"
 TARGET=$(rustc -vV | sed -n 's|host: ||p')
 echo "==> Target: $TARGET  (mode: $MODE)"
 
-# 1. Build fleet CLI (native)
+# 1. Build fleet CLI sidecar (native, no GUI deps — this is a CLI binary)
 echo "==> Building fleet CLI (native)..."
-cargo build $CARGO_FLAG --bin fleet-cli --features tts --manifest-path "$CARGO_TOML"
+cargo build $CARGO_FLAG --bin fleet-cli --manifest-path "$CARGO_TOML"
 
 # 2. Copy compiled binary into binaries/ so Tauri bundles the real binary
 mkdir -p src-tauri/binaries
@@ -65,7 +65,7 @@ echo "==> Copied fleet CLI → $DST"
 
 # 3. Build Tauri app (frontend + Rust main binary, .app only — we create DMG/PKG ourselves)
 echo "==> Building Tauri app..."
-npx tauri build --features tts --bundles app
+npx tauri build --features gui,tts --bundles app
 
 # 4. Sign with entitlements (macOS only)
 APP_BUNDLE="src-tauri/target/$MODE/bundle/macos/Claw Fleet.app"
