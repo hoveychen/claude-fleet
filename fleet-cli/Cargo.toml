@@ -1,6 +1,6 @@
 [package]
 name = "fleet-cli"
-version = "26.4.11-dev.1775913003"
+version = "0.0.0"
 edition = "2021"
 publish = false
 
