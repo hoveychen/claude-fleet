@@ -48,6 +48,10 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 zstd = "0.13"
 msedge-tts = { version = "0.3", optional = true }
 rodio = { version = "0.19", default-features = false, features = ["mp3"], optional = true }
+# msedge-tts → isahc → curl-sys → openssl-sys; vendored builds OpenSSL from
+# source so cross-compiling (e.g. universal macOS binary) doesn't need a
+# preinstalled x86_64 OpenSSL on an ARM runner.
+openssl = { version = "0.10", features = ["vendored"], optional = true }
 
 [features]
 default = []
@@ -58,7 +62,7 @@ gui = [
     "tauri-plugin-clipboard-manager", "tauri-plugin-dialog",
     "notify", "rfd", "image",
 ]
-tts = ["msedge-tts", "rodio"]
+tts = ["msedge-tts", "rodio", "openssl"]
 
 [profile.release]
 strip = true
