@@ -1387,7 +1387,10 @@ fn detect_audit_critical_notifications(
 
     let active_ids: HashSet<String> = active.iter().map(|s| s.id.clone()).collect();
     let mut cache = audit_cache.lock().unwrap();
-    cache.retain(|id, _| active_ids.contains(id));
+    // NOTE: Do NOT evict idle sessions from the shared cache here.
+    // Only get_audit_events() should evict, because it persists events to
+    // audit_history first.  Evicting here would silently drop events that
+    // have not yet been persisted, making them invisible in the audit panel.
 
     let mut critical_events = Vec::new();
     for session in &active {

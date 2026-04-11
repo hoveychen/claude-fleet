@@ -16,7 +16,7 @@ on:
 
 jobs:
   notarize:
-    name: Notarize — ${{ matrix.name }}
+    name: Notarize macOS Universal
     # For workflow_run: only run if the release succeeded
     if: >
       github.event_name == 'workflow_dispatch' ||
@@ -26,15 +26,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Apple Silicon
-            arch_suffix: macos-arm64
-          - name: Intel
-            arch_suffix: macos-x64
 
     steps:
       - name: Resolve tag
@@ -52,7 +43,7 @@ jobs:
         run: |
           mkdir -p work
           gh release download "${{ steps.tag.outputs.tag }}" \
-            --pattern "*${{ matrix.arch_suffix }}*.pkg" \
+            --pattern "claw-fleet-macos.pkg" \
             --dir work/ \
             --repo "${{ github.repository }}"
           echo "Downloaded:"

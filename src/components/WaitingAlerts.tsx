@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import type { AuditAlert, WaitingAlert } from "../types";
-import { useAuditAlertsStore, useAuditStore, useWaitingAlertsStore } from "../store";
+import { useAuditAlertsStore, useAuditStore, useDetailStore, useSessionsStore, useUIStore, useWaitingAlertsStore } from "../store";
 import { getItem } from "../storage";
 import { playAlertSound, type TtsMode } from "../audio";
 import styles from "./WaitingAlerts.module.css";
@@ -12,6 +12,15 @@ function timeAgo(ms: number, t: (key: string, opts?: Record<string, unknown>) =>
   if (secs < 60) return t("just_now");
   const mins = Math.floor(secs / 60);
   return t("m_ago", { n: mins });
+}
+
+/** Navigate to a session by jsonlPath: switch to list view and open the session detail */
+function navigateToSession(jsonlPath: string) {
+  const session = useSessionsStore.getState().sessions.find((s) => s.jsonlPath === jsonlPath);
+  if (session) {
+    useUIStore.getState().setViewMode("list");
+    useDetailStore.getState().open(session);
+  }
 }
 
 /** A single notification card with swipe-to-dismiss */
@@ -32,11 +41,16 @@ function AlertCard({
     setTimeout(onDismiss, 280);
   };
 
+  const handleNavigate = () => {
+    handleDismiss();
+    navigateToSession(alert.jsonlPath);
+  };
+
   return (
     <div
       ref={cardRef}
       className={`${styles.card} ${leaving ? styles.card_leaving : ""}`}
-      onClick={handleDismiss}
+      onClick={handleNavigate}
       title={t("waiting_alerts.dismiss_tip")}
     >
       <div className={styles.card_dot} />
@@ -75,10 +89,17 @@ function AuditAlertCard({
     setTimeout(onDismiss, 280);
   };
 
+  const handleNavigate = () => {
+    handleDismiss();
+    // Navigate to audit view for audit alerts
+    useUIStore.getState().setViewMode("audit");
+    navigateToSession(alert.jsonlPath);
+  };
+
   return (
     <div
       className={`${styles.card} ${styles.card_audit} ${leaving ? styles.card_leaving : ""}`}
-      onClick={handleDismiss}
+      onClick={handleNavigate}
       title={t("waiting_alerts.dismiss_tip")}
     >
       <div className={styles.card_dot_critical} />

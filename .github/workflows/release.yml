@@ -125,19 +125,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macOS (Apple Silicon)
+          - name: macOS (Universal)
             runner: macos-latest
-            rust_target: aarch64-apple-darwin
-            args: --target aarch64-apple-darwin --features gui,tts
+            rust_target: universal-apple-darwin
+            args: --target universal-apple-darwin --features gui,tts
             fleet_bin: fleet-cli
-            fixed_suffix: macos-arm64
-
-          - name: macOS (Intel)
-            runner: macos-15-intel
-            rust_target: x86_64-apple-darwin
-            args: --target x86_64-apple-darwin --features gui,tts
-            fleet_bin: fleet-cli
-            fixed_suffix: macos-x64
+            fixed_suffix: macos
 
           - name: Windows (x64)
             runner: windows-latest
@@ -145,13 +138,6 @@ jobs:
             args: --target x86_64-pc-windows-msvc --features gui,tts
             fleet_bin: fleet-cli.exe
             fixed_suffix: windows-x64
-
-          - name: Windows (ARM64)
-            runner: windows-latest
-            rust_target: aarch64-pc-windows-msvc
-            args: --target aarch64-pc-windows-msvc --features gui,tts
-            fleet_bin: fleet-cli.exe
-            fixed_suffix: windows-arm64
 
           - name: Linux (x86_64)
             runner: ubuntu-22.04
@@ -205,7 +191,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.rust_target }}
+          targets: ${{ matrix.rust_target == 'universal-apple-darwin' && 'aarch64-apple-darwin,x86_64-apple-darwin' || matrix.rust_target }}
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -233,28 +219,44 @@ jobs:
       - name: Build fleet CLI sidecar
         shell: bash
         run: |
-          # Build the CLI binary (named fleet-cli to avoid collision with tauri externalBin "fleet")
-          cargo build --release --bin fleet-cli \
-            --manifest-path src-tauri/Cargo.toml \
-            --target ${{ matrix.rust_target }}
           mkdir -p src-tauri/binaries
 
-          EXT=""
-          if [ "$RUNNER_OS" = "Windows" ]; then EXT=".exe"; fi
+          if [ "${{ matrix.rust_target }}" = "universal-apple-darwin" ]; then
+            # Build for both architectures and merge with lipo
+            cargo build --release --bin fleet-cli \
+              --manifest-path src-tauri/Cargo.toml \
+              --target aarch64-apple-darwin
+            cargo build --release --bin fleet-cli \
+              --manifest-path src-tauri/Cargo.toml \
+              --target x86_64-apple-darwin
+            lipo -create \
+              src-tauri/target/aarch64-apple-darwin/release/fleet-cli \
+              src-tauri/target/x86_64-apple-darwin/release/fleet-cli \
+              -output src-tauri/binaries/fleet-universal-apple-darwin
+            chmod +x src-tauri/binaries/fleet-universal-apple-darwin
+          else
+            # Build the CLI binary (named fleet-cli to avoid collision with tauri externalBin "fleet")
+            cargo build --release --bin fleet-cli \
+              --manifest-path src-tauri/Cargo.toml \
+              --target ${{ matrix.rust_target }}
 
-          # Copy as fleet-{triple} — tauri externalBin strips the triple and bundles it as "fleet"
-          cp "src-tauri/target/${{ matrix.rust_target }}/release/${{ matrix.fleet_bin }}" \
-             "src-tauri/binaries/fleet-${{ matrix.rust_target }}${EXT}"
+            EXT=""
+            if [ "$RUNNER_OS" = "Windows" ]; then EXT=".exe"; fi
 
-          # Linux: deb.files needs a generic "fleet-linux" name (same binary, generic path)
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            cp "src-tauri/target/${{ matrix.rust_target }}/release/fleet-cli" \
-               "src-tauri/binaries/fleet-linux"
-            chmod +x "src-tauri/binaries/fleet-linux"
-          fi
+            # Copy as fleet-{triple} — tauri externalBin strips the triple and bundles it as "fleet"
+            cp "src-tauri/target/${{ matrix.rust_target }}/release/${{ matrix.fleet_bin }}" \
+               "src-tauri/binaries/fleet-${{ matrix.rust_target }}${EXT}"
 
-          if [ "$RUNNER_OS" != "Windows" ]; then
-            chmod +x "src-tauri/binaries/fleet-${{ matrix.rust_target }}"
+            # Linux: deb.files needs a generic "fleet-linux" name (same binary, generic path)
+            if [ "$RUNNER_OS" = "Linux" ]; then
+              cp "src-tauri/target/${{ matrix.rust_target }}/release/fleet-cli" \
+                 "src-tauri/binaries/fleet-linux"
+              chmod +x "src-tauri/binaries/fleet-linux"
+            fi
+
+            if [ "$RUNNER_OS" != "Windows" ]; then
+              chmod +x "src-tauri/binaries/fleet-${{ matrix.rust_target }}"
+            fi
           fi
 
       # Sign on macOS — APPLE_ID/PASSWORD/TEAM_ID intentionally omitted
@@ -349,9 +351,12 @@ jobs:
           # PKG installer
           cp src-tauri/target/${{ matrix.rust_target }}/release/bundle/pkg/claw-fleet-${{ matrix.fixed_suffix }}.pkg \
              dist-artifacts/
-          # Standalone fleet binary
-          cp src-tauri/target/${{ matrix.rust_target }}/release/fleet-cli \
-             dist-artifacts/fleet-${{ matrix.fixed_suffix }}
+          # Standalone fleet binary (universal via lipo)
+          lipo -create \
+            src-tauri/target/aarch64-apple-darwin/release/fleet-cli \
+            src-tauri/target/x86_64-apple-darwin/release/fleet-cli \
+            -output dist-artifacts/fleet-${{ matrix.fixed_suffix }}
+          chmod +x dist-artifacts/fleet-${{ matrix.fixed_suffix }}
 
       - name: Collect artifacts (Windows)
         if: runner.os == 'Windows'
@@ -435,10 +440,8 @@ jobs:
 
           | | Platform | Architecture | Download |
           |---|---|---|---|
-          | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-apple.svg" width="24"> | macOS | Apple Silicon (M1/M2/M3/M4) | [claw-fleet-macos-arm64.pkg](${DL}/claw-fleet-macos-arm64.pkg) |
-          | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-apple.svg" width="24"> | macOS | Intel | [claw-fleet-macos-x64.pkg](${DL}/claw-fleet-macos-x64.pkg) |
-          | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-windows.svg" width="24"> | Windows | x64 | [claw-fleet-windows-x64-setup.exe](${DL}/claw-fleet-windows-x64-setup.exe) |
-          | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-windows.svg" width="24"> | Windows | ARM64 | [claw-fleet-windows-arm64-setup.exe](${DL}/claw-fleet-windows-arm64-setup.exe) |
+          | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-apple.svg" width="24"> | macOS | Universal (Intel + Apple Silicon) | [claw-fleet-macos.pkg](${DL}/claw-fleet-macos.pkg) |
+          | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-windows.svg" width="24"> | Windows | x64 / ARM64 | [claw-fleet-windows-x64-setup.exe](${DL}/claw-fleet-windows-x64-setup.exe) |
           | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-linux.svg" width="24"> | Linux | x86_64 | [claw-fleet-linux-x64.deb](${DL}/claw-fleet-linux-x64.deb) / [claw-fleet-linux-x64.AppImage](${DL}/claw-fleet-linux-x64.AppImage) |
           | <img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/docs/icon-linux.svg" width="24"> | Linux | ARM64 | [claw-fleet-linux-arm64.deb](${DL}/claw-fleet-linux-arm64.deb) / [claw-fleet-linux-arm64.AppImage](${DL}/claw-fleet-linux-arm64.AppImage) |
 

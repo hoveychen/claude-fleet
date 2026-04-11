@@ -122,10 +122,8 @@ Download the latest pre-built binary for your platform from the [Releases page](
 
 | | Platform | Architecture | Download |
 |---|---|---|---|
-| <img src="docs/icon-apple.svg" width="24"> | macOS | Apple Silicon (M1/M2/M3/M4) | [claw-fleet-macos-arm64.pkg](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-macos-arm64.pkg) |
-| <img src="docs/icon-apple.svg" width="24"> | macOS | Intel | [claw-fleet-macos-x64.pkg](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-macos-x64.pkg) |
-| <img src="docs/icon-windows.svg" width="24"> | Windows | x64 | [claw-fleet-windows-x64-setup.exe](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-windows-x64-setup.exe) |
-| <img src="docs/icon-windows.svg" width="24"> | Windows | ARM64 | [claw-fleet-windows-arm64-setup.exe](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-windows-arm64-setup.exe) |
+| <img src="docs/icon-apple.svg" width="24"> | macOS | Universal (Intel + Apple Silicon) | [claw-fleet-macos.pkg](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-macos.pkg) |
+| <img src="docs/icon-windows.svg" width="24"> | Windows | x64 / ARM64 | [claw-fleet-windows-x64-setup.exe](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-windows-x64-setup.exe) |
 | <img src="docs/icon-linux.svg" width="24"> | Linux | x86\_64 | [claw-fleet-linux-x64.deb](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-linux-x64.deb) · [claw-fleet-linux-x64.AppImage](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-linux-x64.AppImage) |
 | <img src="docs/icon-linux.svg" width="24"> | Linux | ARM64 | [claw-fleet-linux-arm64.deb](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-linux-arm64.deb) · [claw-fleet-linux-arm64.AppImage](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-linux-arm64.AppImage) |
 | <img src="docs/icon-android.svg" width="24"> | Android | ARM64 / x86_64 | [claw-fleet-mobile.apk](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-mobile.apk) |
