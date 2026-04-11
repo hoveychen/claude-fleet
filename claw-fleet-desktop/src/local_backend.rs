@@ -31,7 +31,7 @@ pub struct LocalBackend {
     /// Registered agent sources (Claude Code, Cursor, OpenClaw, …).
     sources: Arc<Vec<Box<dyn AgentSource>>>,
     sessions: Arc<Mutex<Vec<SessionInfo>>>,
-    watch: Arc<crate::backend::WatchState>,
+    watch: Arc<crate::WatchState>,
     /// Active waiting-input alerts, keyed by session ID.
     waiting_alerts: Arc<Mutex<HashMap<String, WaitingAlert>>>,
     /// Semantic outcome tags per session, set by background analysis.
@@ -82,7 +82,7 @@ impl LocalBackend {
 
         let sources = Arc::new(sources);
         let sessions: Arc<Mutex<Vec<SessionInfo>>> = Arc::new(Mutex::new(Vec::new()));
-        let watch = Arc::new(crate::backend::WatchState::new());
+        let watch = Arc::new(crate::WatchState::new());
         let waiting_alerts: Arc<Mutex<HashMap<String, WaitingAlert>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let session_outcomes: Arc<Mutex<HashMap<String, Vec<String>>>> =
@@ -559,7 +559,7 @@ fn path_is_in_memory_dir(path: &std::path::Path) -> bool {
     path.components().any(|c| c.as_os_str() == "memory")
 }
 
-fn emit_tail_lines(path: &std::path::Path, app: &AppHandle, watch: &crate::backend::WatchState) {
+fn emit_tail_lines(path: &std::path::Path, app: &AppHandle, watch: &crate::WatchState) {
     let mut guard = watch.offset.lock().unwrap();
     let cur = *guard;
 
@@ -1385,7 +1385,6 @@ fn detect_audit_critical_notifications(
         .filter(|s| s.status != SessionStatus::Idle)
         .collect();
 
-    let active_ids: HashSet<String> = active.iter().map(|s| s.id.clone()).collect();
     let mut cache = audit_cache.lock().unwrap();
     // NOTE: Do NOT evict idle sessions from the shared cache here.
     // Only get_audit_events() should evict, because it persists events to

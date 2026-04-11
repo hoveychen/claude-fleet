@@ -1,15 +1,11 @@
 fn main() {
-    #[cfg(feature = "gui")]
-    {
-        // Ensure sidecar placeholder binaries exist so `cargo build` works in local dev.
-        // In CI, the real fleet binaries are placed in binaries/ before tauri-action runs
-        // and automatically overwrite these placeholders.
-        ensure_sidecar_placeholders();
-        tauri_build::build();
-    }
+    // Ensure sidecar placeholder binaries exist so `cargo build` works in local dev.
+    // In CI, the real fleet binaries are placed in binaries/ before tauri-action runs
+    // and automatically overwrite these placeholders.
+    ensure_sidecar_placeholders();
+    tauri_build::build();
 }
 
-#[cfg(feature = "gui")]
 fn ensure_sidecar_placeholders() {
     let target = std::env::var("TARGET").unwrap_or_default();
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
@@ -33,7 +29,6 @@ fn ensure_sidecar_placeholders() {
     }
 }
 
-#[cfg(feature = "gui")]
 fn write_placeholder(path: &std::path::Path) {
     // Minimal shell script — satisfies Tauri's build-time existence check.
     // The CI pipeline replaces this with the real fleet binary before bundling.

@@ -23,7 +23,7 @@ use crate::audit::{self, ExternalPatternsFile};
 /// Points to the `main` branch so that merging a PR automatically publishes
 /// the update — no manual release step required.
 const REMOTE_PATTERNS_URL: &str =
-    "https://raw.githubusercontent.com/hoveychen/claw-fleet/main/src-tauri/resources/audit-patterns.json";
+    "https://raw.githubusercontent.com/hoveychen/claw-fleet/main/audit-patterns.json";
 
 /// How often (in seconds) the background thread checks for updates.
 const CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60; // 24 hours
@@ -51,62 +51,6 @@ fn local_version(path: &PathBuf) -> u32 {
         .and_then(|s| serde_json::from_str::<ExternalPatternsFile>(&s).ok())
         .map(|f| f.version)
         .unwrap_or(0)
-}
-
-#[cfg(feature = "gui")]
-/// Read the version from the bundled resource file.  Returns 0 if absent.
-fn bundled_version(app_handle: &tauri::AppHandle) -> u32 {
-    use tauri::Manager;
-    app_handle
-        .path()
-        .resolve("resources/audit-patterns.json", tauri::path::BaseDirectory::Resource)
-        .ok()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str::<ExternalPatternsFile>(&s).ok())
-        .map(|f| f.version)
-        .unwrap_or(0)
-}
-
-// ── Bootstrap: ensure local file exists ─────────────────────────────────────
-
-#[cfg(feature = "gui")]
-/// On first run (no local file), copy the bundled resource to
-/// `~/.fleet/fleet-audit-patterns.json` so the audit module has something
-/// to load without waiting for the first remote check.
-pub fn bootstrap_patterns(app_handle: &tauri::AppHandle) {
-    use tauri::Manager;
-    let Some(local) = local_patterns_path() else { return };
-    if local.exists() {
-        // Already have a local file.  Check if the bundled version is newer
-        // (happens after an app upgrade ships new built-in patterns).
-        let lv = local_version(&local);
-        let bv = bundled_version(app_handle);
-        if bv > lv {
-            if let Ok(bundled_path) = app_handle
-                .path()
-                .resolve("resources/audit-patterns.json", tauri::path::BaseDirectory::Resource)
-            {
-                if let Ok(content) = std::fs::read_to_string(&bundled_path) {
-                    let _ = atomic_write(&local, &content);
-                    audit::reload_patterns();
-                    crate::log_debug(&format!(
-                        "pattern_update: upgraded local patterns v{lv} → v{bv} from bundled resource"
-                    ));
-                }
-            }
-        }
-        return;
-    }
-    // No local file — seed from bundled resource.
-    if let Ok(bundled_path) = app_handle
-        .path()
-        .resolve("resources/audit-patterns.json", tauri::path::BaseDirectory::Resource)
-    {
-        if let Ok(content) = std::fs::read_to_string(&bundled_path) {
-            let _ = atomic_write(&local, &content);
-            crate::log_debug("pattern_update: seeded local patterns from bundled resource");
-        }
-    }
 }
 
 // ── Remote fetch ────────────────────────────────────────────────────────────

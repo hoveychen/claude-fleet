@@ -125,7 +125,6 @@ Download the latest pre-built binary for your platform from the [Releases page](
 | <img src="docs/icon-apple.svg" width="24"> | macOS | Universal (Intel + Apple Silicon) | [claw-fleet-macos.pkg](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-macos.pkg) |
 | <img src="docs/icon-windows.svg" width="24"> | Windows | x64 / ARM64 | [claw-fleet-windows-x64-setup.exe](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-windows-x64-setup.exe) |
 | <img src="docs/icon-linux.svg" width="24"> | Linux | x86\_64 | [claw-fleet-linux-x64.deb](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-linux-x64.deb) · [claw-fleet-linux-x64.AppImage](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-linux-x64.AppImage) |
-| <img src="docs/icon-linux.svg" width="24"> | Linux | ARM64 | [claw-fleet-linux-arm64.deb](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-linux-arm64.deb) · [claw-fleet-linux-arm64.AppImage](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-linux-arm64.AppImage) |
 | <img src="docs/icon-android.svg" width="24"> | Android | ARM64 / x86_64 | [claw-fleet-mobile.apk](https://github.com/hoveychen/claw-fleet/releases/latest/download/claw-fleet-mobile.apk) |
 
 > **Mobile app**: The Android companion app is released separately — look for the latest `mobile-v*` release on the [Releases page](https://github.com/hoveychen/claw-fleet/releases). Scan the QR code shown in Claw Fleet Desktop to connect.
@@ -159,7 +158,7 @@ npm run tauri dev
 npm run tauri build
 ```
 
-The output binary and installer are placed under `src-tauri/target/release/bundle/`.
+The output binary and installer are placed under `target/release/bundle/`.
 
 ---
 
@@ -211,7 +210,7 @@ The mobile app is a read-only client (except for stop commands). All data flows 
 
 Pull requests are welcome! A few pointers:
 
-- **Backend** is Rust in `src-tauri/src/` — `session.rs` owns session parsing, `watcher.rs` owns the file-system loop
+- **Backend** is Rust in `claw-fleet-core/src/` — `session.rs` owns session parsing, `watcher.rs` owns the file-system loop
 - **Frontend** is React + TypeScript in `src/` — components use CSS Modules, state is managed with Zustand
 - **i18n** — locale files live in `src/locales/`; copy `en.json`, translate, register in `src/i18n.ts`
 

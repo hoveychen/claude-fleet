@@ -191,7 +191,7 @@ pub struct RemoteBackend {
     // Backend state
     app: tauri::AppHandle,
     sessions: Arc<Mutex<Vec<crate::session::SessionInfo>>>,
-    watch: Arc<crate::backend::WatchState>,
+    watch: Arc<crate::WatchState>,
     /// Active waiting-input alerts, keyed by session ID.
     waiting_alerts: Arc<Mutex<std::collections::HashMap<String, crate::backend::WaitingAlert>>>,
     /// Semantic outcome tags per session, set by background analysis.
@@ -1268,7 +1268,7 @@ fn connect_remote_start_probe(
         tail_running,
         app: app.clone(),
         sessions,
-        watch: Arc::new(crate::backend::WatchState::new()),
+        watch: Arc::new(crate::WatchState::new()),
         waiting_alerts,
         notified_audit_keys,
         session_outcomes,

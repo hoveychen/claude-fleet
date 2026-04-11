@@ -1,0 +1,51 @@
+[package]
+name = "claw-fleet-desktop"
+version = "26.4.11-dev.1775913003"
+edition = "2021"
+publish = false
+
+[lib]
+name = "claw_fleet_desktop"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+claw-fleet-core = { path = "../claw-fleet-core" }
+
+# ── Tauri & GUI ──────────────────────────────────────────────────────────────
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-notification = "2.3.3"
+tauri-plugin-store = "2.4.2"
+tauri-plugin-clipboard-manager = "2.3.2"
+tauri-plugin-dialog = "2"
+notify = "6"
+rfd = "0.15"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# ── TTS ──────────────────────────────────────────────────────────────────────
+msedge-tts = "0.3"
+rodio = { version = "0.19", default-features = false, features = ["mp3"] }
+# msedge-tts → isahc → curl-sys → openssl-sys; vendored builds OpenSSL from
+# source so cross-compiling (e.g. universal macOS binary) doesn't need a
+# preinstalled x86_64 OpenSSL on an ARM runner.
+openssl = { version = "0.10", features = ["vendored"], optional = true }
+
+# ── Re-used from core (needed directly in desktop modules) ───────────────────
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
+libc = "0.2"
+tiny_http = "0.12"
+percent-encoding = "2"
+
+[features]
+default = []
+# Compile OpenSSL from source — only needed for macOS universal cross-compilation.
+vendored-ssl = ["openssl"]

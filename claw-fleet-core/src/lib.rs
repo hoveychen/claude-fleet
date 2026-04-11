@@ -7,35 +7,20 @@ pub mod claude_source;
 pub mod codex_source;
 pub mod cursor;
 pub mod daily_report;
-#[cfg(feature = "gui")]
-pub mod embedded_server;
 pub mod hooks;
 pub mod llm_provider;
-#[cfg(feature = "gui")]
-pub mod local_backend;
 pub mod memory;
 pub mod openclaw_source;
 pub mod pattern_update;
-#[cfg(feature = "gui")]
-pub mod remote;
 pub mod search_index;
 pub mod session;
 pub mod skills;
 pub mod tcc;
-#[cfg(feature = "gui")]
-pub mod tunnel;
-#[cfg(feature = "gui")]
-pub mod version_check;
-
-#[cfg(feature = "gui")]
-mod gui;
-#[cfg(feature = "gui")]
-pub use gui::*;
 
 use std::fs;
 use session::SessionInfo;
 
-pub(crate) fn log_debug(msg: &str) {
+pub fn log_debug(msg: &str) {
     if let Some(home) = session::real_home_dir() {
         let log_path = home.join(".fleet").join("claw-fleet-debug.log");
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
@@ -51,15 +36,11 @@ pub(crate) fn log_debug(msg: &str) {
 // ── Shared functions (used by both GUI app and fleet-cli probe) ──────────────
 
 /// Detect which Claude-related tools are installed on the local machine.
-/// Used by LocalBackend and fleet serve.
 pub fn detect_installed_tools(sessions: &[SessionInfo]) -> backend::DetectedTools {
     let home = session::real_home_dir();
 
-    // CLI: already checked via PATH / common paths
     let (cli, _) = check_cli_installed();
 
-    // VS Code extension: check ~/.vscode/extensions/ and ~/.vscode-insiders/extensions/
-    // (excludes ~/.cursor — that's tracked separately)
     let vscode = home.as_ref().map_or(false, |h| {
         let ext_dirs = [
             h.join(".vscode").join("extensions"),
@@ -79,10 +60,8 @@ pub fn detect_installed_tools(sessions: &[SessionInfo]) -> backend::DetectedTool
         })
     });
 
-    // Cursor IDE: check if ~/.cursor exists
     let cursor = home.as_ref().map_or(false, |h| h.join(".cursor").is_dir());
 
-    // OpenClaw: check if ~/.openclaw exists or `openclaw` is in PATH
     let openclaw = home.as_ref().map_or(false, |h| h.join(".openclaw").is_dir())
         || {
             #[cfg(unix)]
@@ -91,7 +70,6 @@ pub fn detect_installed_tools(sessions: &[SessionInfo]) -> backend::DetectedTool
             { std::process::Command::new("where").arg("openclaw").output().map_or(false, |o| o.status.success()) }
         };
 
-    // JetBrains: check live sessions for JetBrains IDE names
     let jetbrains = sessions.iter().any(|s| {
         s.ide_name.as_deref().map_or(false, |name| {
             let n = name.to_lowercase();
@@ -101,7 +79,6 @@ pub fn detect_installed_tools(sessions: &[SessionInfo]) -> backend::DetectedTool
         })
     });
 
-    // Claude Desktop app
     let desktop = {
         #[cfg(target_os = "macos")]
         { std::path::Path::new("/Applications/Claude.app").exists() }
@@ -115,7 +92,6 @@ pub fn detect_installed_tools(sessions: &[SessionInfo]) -> backend::DetectedTool
         { false }
     };
 
-    // Codex: check if ~/.codex exists or `codex` is in PATH
     let codex = home.as_ref().map_or(false, |h| h.join(".codex").is_dir())
         || {
             #[cfg(unix)]
@@ -124,7 +100,6 @@ pub fn detect_installed_tools(sessions: &[SessionInfo]) -> backend::DetectedTool
             { std::process::Command::new("where").arg("codex").output().map_or(false, |o| o.status.success()) }
         };
 
-    // Apply source enable/disable config — disabled sources should not appear in the UI.
     let config = agent_source::SourcesConfig::load();
     let claude_enabled = config.is_source_enabled("claude");
     let cli = cli && claude_enabled;
@@ -139,7 +114,6 @@ pub fn detect_installed_tools(sessions: &[SessionInfo]) -> backend::DetectedTool
 }
 
 pub fn check_cli_installed() -> (bool, Option<String>) {
-    // Try `which claude` (unix) or `where claude` (windows)
     #[cfg(unix)]
     let cmd = "which";
     #[cfg(not(unix))]
@@ -152,7 +126,6 @@ pub fn check_cli_installed() -> (bool, Option<String>) {
         }
     }
 
-    // Also check common install locations
     let common_paths = [
         session::real_home_dir().map(|h| h.join(".npm-global").join("bin").join("claude")),
         session::real_home_dir().map(|h| h.join(".local").join("bin").join("claude")),
@@ -175,7 +148,6 @@ pub fn check_cli_installed() -> (bool, Option<String>) {
 
 pub const FLEET_SKILL_MD: &str = include_str!("../../skills/fleet/SKILL.md");
 
-/// Tools we know support the Agent Skills standard, keyed by their home dir name.
 pub const SKILL_TARGETS: &[(&str, &str)] = &[
     ("Claude Code", ".claude"),
     ("GitHub Copilot", ".copilot"),

@@ -12,9 +12,9 @@ dist
 dist-ssr
 *.local
 
-# Tauri build output
-src-tauri/target/
-src-tauri/binaries/
+# Rust build output
+target/
+claw-fleet-desktop/binaries/
 
 # Video pipeline output
 promo/video/output/

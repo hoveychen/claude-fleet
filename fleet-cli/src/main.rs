@@ -1,13 +1,13 @@
 use clap::{Parser, Subcommand};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use claw_fleet_lib::account::{fetch_account_info_blocking as fetch_account_info, AccountInfo, UsageStats};
-use claw_fleet_lib::agent_source::{self, build_sources, find_source_for_path};
-use claw_fleet_lib::hooks;
-use claw_fleet_lib::memory;
-use claw_fleet_lib::skills;
-use claw_fleet_lib::session::{get_claude_dir, scan_all_sources, SessionInfo, SessionStatus};
-use claw_fleet_lib::{FLEET_SKILL_MD, SKILL_TARGETS};
+use claw_fleet_core::account::{fetch_account_info_blocking as fetch_account_info, AccountInfo, UsageStats};
+use claw_fleet_core::agent_source::{self, build_sources, find_source_for_path};
+use claw_fleet_core::hooks;
+use claw_fleet_core::memory;
+use claw_fleet_core::skills;
+use claw_fleet_core::session::{get_claude_dir, scan_all_sources, SessionInfo, SessionStatus};
+use claw_fleet_core::{FLEET_SKILL_MD, SKILL_TARGETS};
 
 // ── Color helpers ─────────────────────────────────────────────────────────────
 
@@ -964,7 +964,7 @@ fn cmd_memory(file: Option<String>, as_json: bool) {
 // ── fleet search ──────────────────────────────────────────────────────────────
 
 fn cmd_search(query: &str, limit: usize, as_json: bool) {
-    use claw_fleet_lib::search_index::SearchIndex;
+    use claw_fleet_core::search_index::SearchIndex;
 
     if query.trim().is_empty() {
         eprintln!("Error: search query cannot be empty");
@@ -1037,7 +1037,7 @@ fn cmd_search(query: &str, limit: usize, as_json: bool) {
 // ── fleet audit ───────────────────────────────────────────────────────────────
 
 fn cmd_audit(min_level: &str, filter: Option<&str>, as_json: bool) {
-    use claw_fleet_lib::audit::{extract_audit_events, AuditRiskLevel};
+    use claw_fleet_core::audit::{extract_audit_events, AuditRiskLevel};
 
     let min = match min_level.to_lowercase().as_str() {
         "medium" => AuditRiskLevel::Medium,
@@ -1154,15 +1154,15 @@ fn cmd_audit(min_level: &str, filter: Option<&str>, as_json: bool) {
 fn cmd_serve(port: u16, token: String) {
     use std::io::{Read, Seek, SeekFrom};
     use percent_encoding::percent_decode_str;
-    use claw_fleet_lib::search_index::SearchIndex;
+    use claw_fleet_core::search_index::SearchIndex;
 
     use std::sync::{Arc, Mutex};
-    use claw_fleet_lib::daily_report::{
+    use claw_fleet_core::daily_report::{
         ReportStore, generate_report_from_sessions, scan_sessions_for_date, generate_ai_summary,
         generate_lessons, append_lesson_to_claude_md, Lesson,
     };
-    use claw_fleet_lib::llm_provider::{self, LlmConfig};
-    use claw_fleet_lib::claude_analyze;
+    use claw_fleet_core::llm_provider::{self, LlmConfig};
+    use claw_fleet_core::claude_analyze;
 
     let sources = build_sources();
 
@@ -1176,12 +1176,12 @@ fn cmd_serve(port: u16, token: String) {
 
     // Load the persistent audit history.
     let audit_history = Arc::new(Mutex::new(
-        claw_fleet_lib::audit::AuditHistory::load(),
+        claw_fleet_core::audit::AuditHistory::load(),
     ));
 
     // Open the full-text search index (stored on the remote host).
     let search_index = {
-        let db_path = claw_fleet_lib::session::real_home_dir()
+        let db_path = claw_fleet_core::session::real_home_dir()
             .expect("cannot determine home dir")
             .join(".fleet")
             .join("fleet-search.db");
@@ -1291,7 +1291,7 @@ fn cmd_serve(port: u16, token: String) {
                 }
                 #[cfg(unix)]
                 {
-                    use claw_fleet_lib::session::scan_cli_processes;
+                    use claw_fleet_core::session::scan_cli_processes;
                     let procs = scan_cli_processes();
                     let pids: Vec<u32> = procs.iter()
                         .filter(|p| p.cwd == workspace)
@@ -1320,7 +1320,7 @@ fn cmd_serve(port: u16, token: String) {
                     let kind = parts[2];
 
                     // Check sources config before serving
-                    let config = claw_fleet_lib::agent_source::SourcesConfig::load();
+                    let config = claw_fleet_core::agent_source::SourcesConfig::load();
                     if !config.is_source_enabled(source_name) {
                         let body = format!(r#"{{"error":"Source '{}' is disabled"}}"#, source_name);
                         let _ = request.respond(
@@ -1368,13 +1368,13 @@ fn cmd_serve(port: u16, token: String) {
 
             "/setup-status" => {
                 let sessions = scan_all_sources(&sources);
-                let detected_tools = claw_fleet_lib::detect_installed_tools(&sessions);
-                let (cli_installed, cli_path) = claw_fleet_lib::check_cli_installed();
+                let detected_tools = claw_fleet_core::detect_installed_tools(&sessions);
+                let (cli_installed, cli_path) = claw_fleet_core::check_cli_installed();
                 let claude_dir_exists = get_claude_dir().map_or(false, |d| d.is_dir());
-                let logged_in = claw_fleet_lib::account::read_keychain_credentials().is_ok();
+                let logged_in = claw_fleet_core::account::read_keychain_credentials().is_ok();
                 let has_sessions = !sessions.is_empty();
 
-                let status = claw_fleet_lib::backend::SetupStatus {
+                let status = claw_fleet_core::backend::SetupStatus {
                     cli_installed,
                     cli_path,
                     claude_dir_exists,
@@ -1390,7 +1390,7 @@ fn cmd_serve(port: u16, token: String) {
             }
 
             "/usage_summaries" => {
-                let summaries = claw_fleet_lib::agent_source::fetch_usage_summaries_from_sources(&sources);
+                let summaries = claw_fleet_core::agent_source::fetch_usage_summaries_from_sources(&sources);
                 let body = serde_json::to_string(&summaries).unwrap_or_default();
                 let _ = request.respond(
                     tiny_http::Response::from_string(body).with_header(json_header),
@@ -1656,7 +1656,7 @@ fn cmd_serve(port: u16, token: String) {
             }
 
             "/audit" => {
-                use claw_fleet_lib::audit::extract_audit_events;
+                use claw_fleet_core::audit::extract_audit_events;
                 let sessions = scan_all_sources(&sources);
                 let active_ids: std::collections::HashSet<String> = sessions
                     .iter()
@@ -1705,7 +1705,7 @@ fn cmd_serve(port: u16, token: String) {
                 all_events.extend(live_events);
 
                 all_events.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-                let summary = claw_fleet_lib::audit::AuditSummary {
+                let summary = claw_fleet_core::audit::AuditSummary {
                     events: all_events,
                     total_sessions_scanned: total,
                 };
@@ -1716,7 +1716,7 @@ fn cmd_serve(port: u16, token: String) {
             }
 
             "/audit/pattern-info" => {
-                let (version, path) = claw_fleet_lib::pattern_update::get_patterns_info();
+                let (version, path) = claw_fleet_core::pattern_update::get_patterns_info();
                 let body = serde_json::json!({
                     "version": version,
                     "path": path,
@@ -1727,7 +1727,7 @@ fn cmd_serve(port: u16, token: String) {
             }
 
             "/audit/check-update" => {
-                let msg = claw_fleet_lib::pattern_update::check_update_now();
+                let msg = claw_fleet_core::pattern_update::check_update_now();
                 let body = serde_json::json!({ "message": msg }).to_string();
                 let _ = request.respond(
                     tiny_http::Response::from_string(body).with_header(json_header),
@@ -2142,11 +2142,11 @@ fn cmd_skill_install() {
 // ── Daily report CLI ────────────────────────────────────────────────────────
 
 fn cmd_report(date: Option<String>, backfill: bool, regenerate: bool, gen_lessons: bool, gen_summary: bool, as_json: bool, lang: &str) {
-    use claw_fleet_lib::daily_report::{
+    use claw_fleet_core::daily_report::{
         ReportStore, generate_report_from_sessions, scan_sessions_for_date,
         generate_lessons, generate_ai_summary,
     };
-    use claw_fleet_lib::llm_provider::{self, LlmConfig};
+    use claw_fleet_core::llm_provider::{self, LlmConfig};
     let llm_cfg = LlmConfig::default();
     let llm_prov = llm_provider::resolve_provider(&llm_cfg.provider)
         .expect("default LLM provider not available");
@@ -2280,7 +2280,7 @@ fn cmd_report(date: Option<String>, backfill: bool, regenerate: bool, gen_lesson
     }
 }
 
-fn print_lessons(lessons: &[claw_fleet_lib::daily_report::Lesson]) {
+fn print_lessons(lessons: &[claw_fleet_core::daily_report::Lesson]) {
     let b = c_bold();
     let d = c_dim();
     let r = c_reset();
@@ -2298,7 +2298,7 @@ fn print_lessons(lessons: &[claw_fleet_lib::daily_report::Lesson]) {
     }
 }
 
-fn print_report(report: &claw_fleet_lib::daily_report::DailyReport) {
+fn print_report(report: &claw_fleet_core::daily_report::DailyReport) {
     let b = c_bold();
     let d = c_dim();
     let r = c_reset();

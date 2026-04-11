@@ -6,7 +6,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, RwLock};
-#[cfg(feature = "tts")]
+
 use std::sync::OnceLock;
 
 use serde::Serialize;
@@ -55,11 +55,11 @@ struct TtsVoice {
     gender: String,
 }
 
-#[cfg(feature = "tts")]
+
 static VOICES_CACHE: std::sync::Mutex<Option<Vec<msedge_tts::voice::Voice>>> =
     std::sync::Mutex::new(None);
 
-#[cfg(feature = "tts")]
+
 fn cached_voices() -> Vec<msedge_tts::voice::Voice> {
     {
         let guard = VOICES_CACHE.lock().unwrap();
@@ -78,7 +78,7 @@ fn cached_voices() -> Vec<msedge_tts::voice::Voice> {
     }
 }
 
-#[cfg(feature = "tts")]
+
 struct VoiceMeta {
     zh_name: &'static str,
     en_name: &'static str,
@@ -86,7 +86,7 @@ struct VoiceMeta {
     gender_en: &'static str,
 }
 
-#[cfg(feature = "tts")]
+
 fn voice_display_map() -> &'static std::collections::HashMap<&'static str, VoiceMeta> {
     static MAP: OnceLock<std::collections::HashMap<&str, VoiceMeta>> = OnceLock::new();
     MAP.get_or_init(|| {
@@ -139,7 +139,7 @@ fn voice_display_map() -> &'static std::collections::HashMap<&'static str, Voice
     })
 }
 
-#[cfg(feature = "tts")]
+
 fn make_tts_voice(v: &msedge_tts::voice::Voice, locale: &str) -> TtsVoice {
     let short = v.short_name.clone().unwrap_or_else(|| v.name.clone());
     let map = voice_display_map();
@@ -174,7 +174,7 @@ fn make_tts_voice(v: &msedge_tts::voice::Voice, locale: &str) -> TtsVoice {
     }
 }
 
-#[cfg(feature = "tts")]
+
 #[tauri::command]
 async fn get_tts_voices(locale: String) -> Vec<TtsVoice> {
     let ui_locale = locale.clone();
@@ -203,7 +203,7 @@ async fn get_tts_voices(locale: String) -> Vec<TtsVoice> {
     filtered
 }
 
-#[cfg(feature = "tts")]
+
 /// Synthesize text via Edge TTS and return raw MP3 bytes.
 fn synthesize_tts(text: &str, voice: Option<&str>, locale: Option<&str>) -> Result<Vec<u8>, String> {
     let voices = cached_voices();
@@ -260,7 +260,7 @@ fn synthesize_tts(text: &str, voice: Option<&str>, locale: Option<&str>) -> Resu
     Ok(audio.audio_bytes)
 }
 
-#[cfg(feature = "tts")]
+
 /// Play raw MP3 bytes through the system audio output using rodio.
 fn play_mp3_bytes(bytes: &[u8]) -> Result<(), String> {
     use rodio::{Decoder, OutputStream, Sink};
@@ -289,7 +289,7 @@ fn play_mp3_bytes(bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(feature = "tts")]
+
 /// Fallback TTS via macOS `say` command.
 fn speak_with_say(text: &str, voice: Option<&str>, locale: Option<&str>) {
     log_debug(&format!("[tts] falling back to macOS say command"));
@@ -311,12 +311,12 @@ fn speak_with_say(text: &str, voice: Option<&str>, locale: Option<&str>) {
     }
 }
 
-#[cfg(feature = "tts")]
+
 /// Global lock to serialize TTS playback — prevents overlapping audio when
 /// multiple notifications arrive at the same time.
 static TTS_PLAYBACK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-#[cfg(feature = "tts")]
+
 /// Synthesize and play text, with automatic fallback to macOS `say`.
 /// This is the core function used by both the Tauri command and backend notifications.
 /// Acquires a global lock so that concurrent calls are queued, not overlapped.
@@ -336,7 +336,7 @@ pub(crate) fn speak_text_blocking(text: &str, voice: Option<&str>, locale: Optio
     }
 }
 
-#[cfg(feature = "tts")]
+
 #[tauri::command]
 async fn speak_text(
     text: String,
@@ -350,7 +350,7 @@ async fn speak_text(
     .map_err(|e| format!("TTS task failed: {e}"))
 }
 
-#[cfg(feature = "tts")]
+
 #[tauri::command]
 fn speak_text_say(text: String, voice: Option<String>, locale: Option<String>) {
     std::thread::spawn(move || {
@@ -358,7 +358,7 @@ fn speak_text_say(text: String, voice: Option<String>, locale: Option<String>) {
     });
 }
 
-#[cfg(feature = "tts")]
+
 fn truncate_for_log(s: &str, max_chars: usize) -> String {
     let mut chars = s.chars();
     let truncated: String = chars.by_ref().take(max_chars).collect();
@@ -369,7 +369,7 @@ fn truncate_for_log(s: &str, max_chars: usize) -> String {
     }
 }
 
-#[cfg(feature = "tts")]
+
 /// Read TTS settings from the Tauri store and play TTS for a notification summary.
 /// Should be called from a background thread (blocks until playback finishes).
 pub(crate) fn play_tts_for_notification(app: &tauri::AppHandle, summary: &str) {
@@ -421,20 +421,6 @@ pub(crate) fn play_tts_for_notification(app: &tauri::AppHandle, summary: &str) {
     speak_text_blocking(summary, voice.as_deref(), locale_ref);
 }
 
-#[cfg(not(feature = "tts"))]
-#[tauri::command]
-async fn get_tts_voices(_locale: String) -> Vec<TtsVoice> { vec![] }
-
-#[cfg(not(feature = "tts"))]
-#[tauri::command]
-async fn speak_text(_text: String, _voice: Option<String>, _locale: Option<String>) -> Result<(), String> { Ok(()) }
-
-#[cfg(not(feature = "tts"))]
-#[tauri::command]
-fn speak_text_say(_text: String, _voice: Option<String>, _locale: Option<String>) {}
-
-#[cfg(not(feature = "tts"))]
-pub(crate) fn play_tts_for_notification(_app: &tauri::AppHandle, _summary: &str) {}
 
 // ── Notification mode ────────────────────────────────────────────────────────
 
@@ -1614,7 +1600,7 @@ pub fn run() {
 
     builder.manage(AppState {
             // NullBackend is a placeholder; replaced with LocalBackend in setup().
-            backend: Arc::new(RwLock::new(Box::new(backend::NullBackend) as Box<dyn Backend>)),
+            backend: Arc::new(RwLock::new(Box::new(NullBackend) as Box<dyn Backend>)),
             locale: Arc::new(Mutex::new("en".to_string())),
             notification_mode: Arc::new(Mutex::new("user_action".to_string())),
             user_title: Arc::new(Mutex::new(String::new())),
@@ -1689,7 +1675,7 @@ pub fn run() {
             // ── Audit pattern updates ───────────────────────────────────────
             // Seed local patterns from bundled resource (first run or app
             // upgrade), then start the daily background updater.
-            pattern_update::bootstrap_patterns(app.handle());
+            desktop_pattern_update::bootstrap_patterns(app.handle());
             pattern_update::start_background_updater();
 
             // Background usage refresh removed — the frontend's periodic

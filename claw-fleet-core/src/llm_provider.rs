@@ -74,7 +74,7 @@ pub trait LlmProvider: Send + Sync {
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
 /// Kill a process by PID in a cross-platform way.
-pub(crate) fn kill_process(pid: u32) {
+pub fn kill_process(pid: u32) {
     #[cfg(unix)]
     unsafe {
         libc::kill(pid as i32, libc::SIGKILL);

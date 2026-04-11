@@ -908,7 +908,7 @@ impl ScanCache {
 
 /// Downgrade a cached session's status when the file hasn't been touched
 /// and enough wall-clock time has elapsed.
-pub(crate) fn age_out_status(info: &mut SessionInfo, age_secs: f64) {
+pub fn age_out_status(info: &mut SessionInfo, age_secs: f64) {
     let idle = match info.status {
         SessionStatus::Streaming if age_secs >= 8.0 => true,
         SessionStatus::Thinking if age_secs >= 120.0 => true,
@@ -1871,7 +1871,7 @@ mod tests {
 
 // ── Process kill helpers ─────────────────────────────────────────────────────
 
-pub(crate) fn collect_process_tree(root_pid: u32) -> Vec<u32> {
+pub fn collect_process_tree(root_pid: u32) -> Vec<u32> {
     let output = match std::process::Command::new("ps")
         .args(["-A", "-o", "pid=,ppid="])
         .output()

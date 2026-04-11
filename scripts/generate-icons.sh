@@ -1,11 +1,11 @@
 #!/bin/bash
-# Generate all Tauri-required icon variants from src-tauri/icons/icon.png
+# Generate all Tauri-required icon variants from claw-fleet-desktop/icons/icon.png
 # Applies Apple-style squircle (superellipse) mask for macOS icons
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-ICONS_DIR="$ROOT_DIR/src-tauri/icons"
+ICONS_DIR="$ROOT_DIR/claw-fleet-desktop/icons"
 SOURCE="$ICONS_DIR/icon.png"
 TEMP_DIR=$(mktemp -d)
 

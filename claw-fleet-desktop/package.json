@@ -9,8 +9,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev --features tts",
-    "tauri:build": "tauri build --features tts"
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@expo/metro-runtime": "^55.0.9",
