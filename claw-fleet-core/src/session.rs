@@ -57,6 +57,13 @@ pub struct SessionInfo {
     pub status: SessionStatus,
     pub token_speed: f64,
     pub total_output_tokens: u64,
+    /// Cumulative USD cost for this session alone (main or subagent).
+    pub total_cost_usd: f64,
+    /// Cost of this session + all its subagents' costs (main sessions only).
+    /// For subagents this equals `total_cost_usd`.
+    pub agent_total_cost_usd: f64,
+    /// USD/min cost rate over the last 5-minute window.
+    pub cost_speed_usd_per_min: f64,
     pub last_message_preview: Option<String>,
     pub last_activity_ms: u64,
     pub created_at_ms: u64,
@@ -622,10 +629,27 @@ pub fn compute_context_percent(
     Some((input_tokens as f64 / window as f64).min(1.0))
 }
 
-fn compute_token_stats(lines: &[&str]) -> (f64, u64) {
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SessionStats {
+    /// Tokens/sec over the last 5-minute window.
+    pub token_speed: f64,
+    /// Cumulative output tokens across all finalized assistant turns.
+    pub total_output_tokens: u64,
+    /// Cumulative USD cost across all finalized assistant turns.
+    pub total_cost_usd: f64,
+    /// USD/min over the last 5-minute window.
+    pub cost_speed_usd_per_min: f64,
+}
+
+fn compute_session_stats(lines: &[&str]) -> SessionStats {
+    use crate::model_cost::{turn_cost_usd, TurnUsage};
+
     let mut total_output: u64 = 0;
-    let mut timed_tokens: Vec<(f64, u64)> = Vec::new();
+    let mut total_cost: f64 = 0.0;
+    // (timestamp_secs, output_tokens, turn_cost_usd)
+    let mut timed: Vec<(f64, u64, f64)> = Vec::new();
     let mut seen_msg_ids: HashSet<String> = HashSet::new();
+    let mut last_model: Option<String> = None;
 
     for line in lines {
         let Ok(v): Result<Value, _> = serde_json::from_str(line) else {
@@ -653,52 +677,95 @@ fn compute_token_stats(lines: &[&str]) -> (f64, u64) {
             seen_msg_ids.insert(msg_id);
         }
 
-        let output_tokens = msg
-            .get("usage")
+        let usage = msg.get("usage");
+        let input_tokens = usage
+            .and_then(|u| u.get("input_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+        let output_tokens = usage
             .and_then(|u| u.get("output_tokens"))
             .and_then(|t| t.as_u64())
             .unwrap_or(0);
+        let cache_creation_tokens = usage
+            .and_then(|u| u.get("cache_creation_input_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+        let cache_read_tokens = usage
+            .and_then(|u| u.get("cache_read_input_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+        let web_search_requests = usage
+            .and_then(|u| u.get("server_tool_use"))
+            .and_then(|s| s.get("web_search_requests"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+
         total_output += output_tokens;
+
+        // Per-turn cost uses this turn's own model; fall back to most-recently-
+        // seen model when a turn omits it (model can change mid-session).
+        let turn_model = msg.get("model").and_then(|m| m.as_str());
+        if let Some(m) = turn_model {
+            last_model = Some(m.to_string());
+        }
+        let cost_model = turn_model.or(last_model.as_deref()).unwrap_or("");
+        let turn_cost = turn_cost_usd(
+            cost_model,
+            &TurnUsage {
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
+                web_search_requests,
+            },
+        );
+        total_cost += turn_cost;
 
         // Timestamp for speed
         if let Some(ts_str) = v.get("timestamp").and_then(|t| t.as_str()) {
             if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts_str) {
-                timed_tokens.push((dt.timestamp() as f64, output_tokens));
+                timed.push((dt.timestamp() as f64, output_tokens, turn_cost));
             }
         }
     }
 
-    // Speed: tokens/s over the last 5-minute window
-    let speed = if timed_tokens.len() >= 2 {
+    // Speed: tokens/s and cost/min over the last 5-minute window
+    let (token_speed, cost_speed_usd_per_min) = if timed.len() >= 2 {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs_f64();
         let window_start = now - 300.0;
 
-        let recent: Vec<_> = timed_tokens
-            .iter()
-            .filter(|(ts, _)| *ts > window_start)
-            .collect();
+        let recent: Vec<_> = timed.iter().filter(|(ts, _, _)| *ts > window_start).collect();
 
         if recent.len() >= 2 {
-            let total_recent: u64 = recent.iter().map(|(_, t)| t).sum();
-            let first_ts = recent.first().map(|(ts, _)| *ts).unwrap_or(0.0);
-            let last_ts = recent.last().map(|(ts, _)| *ts).unwrap_or(0.0);
+            let total_recent_tokens: u64 = recent.iter().map(|(_, t, _)| t).sum();
+            let total_recent_cost: f64 = recent.iter().map(|(_, _, c)| c).sum();
+            let first_ts = recent.first().map(|(ts, _, _)| *ts).unwrap_or(0.0);
+            let last_ts = recent.last().map(|(ts, _, _)| *ts).unwrap_or(0.0);
             let duration = last_ts - first_ts;
             if duration > 0.0 {
-                total_recent as f64 / duration
+                (
+                    total_recent_tokens as f64 / duration,
+                    total_recent_cost * 60.0 / duration,
+                )
             } else {
-                0.0
+                (0.0, 0.0)
             }
         } else {
-            0.0
+            (0.0, 0.0)
         }
     } else {
-        0.0
+        (0.0, 0.0)
     };
 
-    (speed, total_output)
+    SessionStats {
+        token_speed,
+        total_output_tokens: total_output,
+        total_cost_usd: total_cost,
+        cost_speed_usd_per_min,
+    }
 }
 
 /// Extract context-window usage from a Claude-Code JSONL session.
@@ -959,7 +1026,7 @@ pub fn parse_session_info(
     // as WaitingInput. Fall back to file mtime when no real message is found.
     let content_age_secs = last_real_message_age_secs(&last_n).unwrap_or(file_age_secs);
     let status = determine_status(&last_n, file_age_secs, content_age_secs, hook_state);
-    let (token_speed, total_output_tokens) = compute_token_stats(&all_lines);
+    let stats = compute_session_stats(&all_lines);
     let context_percent = extract_last_context_usage(&all_lines)
         .and_then(|(used, model, max)| compute_context_percent(used, Some(&model), max));
     let last_message_preview = extract_last_text(&last_n);
@@ -1000,8 +1067,11 @@ pub fn parse_session_info(
         slug,
         ai_title,
         status,
-        token_speed,
-        total_output_tokens,
+        token_speed: stats.token_speed,
+        total_output_tokens: stats.total_output_tokens,
+        total_cost_usd: stats.total_cost_usd,
+        agent_total_cost_usd: stats.total_cost_usd,
+        cost_speed_usd_per_min: stats.cost_speed_usd_per_min,
         last_message_preview,
         last_activity_ms,
         created_at_ms,
@@ -1060,6 +1130,7 @@ pub fn age_out_status(info: &mut SessionInfo, age_secs: f64) {
     if idle {
         info.status = SessionStatus::Idle;
         info.token_speed = 0.0;
+        info.cost_speed_usd_per_min = 0.0;
     }
 }
 
@@ -1320,6 +1391,25 @@ pub fn scan_claude_sessions(claude_dir: &Path, scan_cache: &ScanCache) -> Vec<Se
         }
     }
 
+    // Aggregate subagent cost into each main session's `agent_total_cost_usd`.
+    // Main sessions already hold their own cost in that field from parse; we add
+    // the sum of every subagent that points back to them.
+    let mut subagent_cost_by_parent: HashMap<String, f64> = HashMap::new();
+    for s in &sessions {
+        if s.is_subagent {
+            if let Some(pid) = &s.parent_session_id {
+                *subagent_cost_by_parent.entry(pid.clone()).or_insert(0.0) += s.total_cost_usd;
+            }
+        }
+    }
+    for session in &mut sessions {
+        if !session.is_subagent {
+            if let Some(extra) = subagent_cost_by_parent.get(&session.id) {
+                session.agent_total_cost_usd += *extra;
+            }
+        }
+    }
+
     // Prune stale entries from session cache.
     {
         let live_paths: HashSet<String> = sessions.iter().map(|s| s.jsonl_path.clone()).collect();
@@ -1473,6 +1563,9 @@ mod tests {
             status,
             token_speed: 10.0,
             total_output_tokens: 500,
+            total_cost_usd: 0.0,
+            agent_total_cost_usd: 0.0,
+            cost_speed_usd_per_min: 0.0,
             last_message_preview: None,
             last_activity_ms: 0,
             created_at_ms: 0,
@@ -1666,26 +1759,28 @@ mod tests {
         );
     }
 
-    // ── compute_token_stats tests ───────────────────────────────────────────
+    // ── compute_session_stats tests ─────────────────────────────────────────
 
     #[test]
-    fn token_stats_empty_lines() {
+    fn session_stats_empty_lines() {
         let lines: Vec<&str> = vec![];
-        let (speed, total) = compute_token_stats(&lines);
-        assert_eq!(total, 0);
-        assert_eq!(speed, 0.0);
+        let stats = compute_session_stats(&lines);
+        assert_eq!(stats.total_output_tokens, 0);
+        assert_eq!(stats.token_speed, 0.0);
+        assert_eq!(stats.total_cost_usd, 0.0);
+        assert_eq!(stats.cost_speed_usd_per_min, 0.0);
     }
 
     #[test]
-    fn token_stats_non_assistant_ignored() {
+    fn session_stats_non_assistant_ignored() {
         let line = json!({"type": "user", "message": {"content": []}}).to_string();
         let lines: Vec<&str> = vec![&line];
-        let (_, total) = compute_token_stats(&lines);
-        assert_eq!(total, 0);
+        let stats = compute_session_stats(&lines);
+        assert_eq!(stats.total_output_tokens, 0);
     }
 
     #[test]
-    fn token_stats_null_stop_reason_ignored() {
+    fn session_stats_null_stop_reason_ignored() {
         let line = json!({
             "type": "assistant",
             "message": {
@@ -1694,12 +1789,12 @@ mod tests {
             }
         }).to_string();
         let lines: Vec<&str> = vec![&line];
-        let (_, total) = compute_token_stats(&lines);
-        assert_eq!(total, 0);
+        let stats = compute_session_stats(&lines);
+        assert_eq!(stats.total_output_tokens, 0);
     }
 
     #[test]
-    fn token_stats_counts_finalized_tokens() {
+    fn session_stats_counts_finalized_tokens() {
         let line = json!({
             "type": "assistant",
             "message": {
@@ -1709,12 +1804,12 @@ mod tests {
             }
         }).to_string();
         let lines: Vec<&str> = vec![&line];
-        let (_, total) = compute_token_stats(&lines);
-        assert_eq!(total, 200);
+        let stats = compute_session_stats(&lines);
+        assert_eq!(stats.total_output_tokens, 200);
     }
 
     #[test]
-    fn token_stats_deduplicates_by_id() {
+    fn session_stats_deduplicates_by_id() {
         let line = json!({
             "type": "assistant",
             "message": {
@@ -1724,12 +1819,12 @@ mod tests {
             }
         }).to_string();
         let lines: Vec<&str> = vec![&line, &line];
-        let (_, total) = compute_token_stats(&lines);
-        assert_eq!(total, 100);
+        let stats = compute_session_stats(&lines);
+        assert_eq!(stats.total_output_tokens, 100);
     }
 
     #[test]
-    fn token_stats_speed_from_recent_timestamps() {
+    fn session_stats_speed_from_recent_timestamps() {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -1740,9 +1835,58 @@ mod tests {
         let l1 = assistant_msg_with_id(vec![], Some("end_turn"), "m1", &ts1);
         let l2 = assistant_msg_with_id(vec![], Some("end_turn"), "m2", &ts2);
         let lines: Vec<&str> = vec![&l1, &l2];
-        let (speed, total) = compute_token_stats(&lines);
-        assert_eq!(total, 100); // 50 + 50
-        assert!(speed > 3.0 && speed < 4.0, "speed={speed}");
+        let stats = compute_session_stats(&lines);
+        assert_eq!(stats.total_output_tokens, 100); // 50 + 50
+        assert!(stats.token_speed > 3.0 && stats.token_speed < 4.0, "speed={}", stats.token_speed);
+    }
+
+    #[test]
+    fn session_stats_cost_from_sonnet_usage() {
+        // Sonnet tier = $3/$15 per Mtok. 1M input + 1M output = $18.
+        let line = json!({
+            "type": "assistant",
+            "message": {
+                "id": "msg_cost",
+                "model": "claude-sonnet-4-6-20251101",
+                "stop_reason": "end_turn",
+                "usage": {
+                    "input_tokens": 1_000_000,
+                    "output_tokens": 1_000_000
+                }
+            }
+        }).to_string();
+        let lines: Vec<&str> = vec![&line];
+        let stats = compute_session_stats(&lines);
+        assert!((stats.total_cost_usd - 18.0).abs() < 1e-6, "cost={}", stats.total_cost_usd);
+    }
+
+    #[test]
+    fn session_stats_cost_speed_usd_per_min() {
+        // Two sonnet turns 30s apart, each 100k output tokens.
+        // Per turn cost: 100k output * $15/M = $1.50. Total recent cost = $3.00.
+        // Duration = 30s → cost speed = $3 * 60 / 30 = $6/min.
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let ts1 = chrono::DateTime::from_timestamp(now as i64 - 60, 0).unwrap().to_rfc3339();
+        let ts2 = chrono::DateTime::from_timestamp(now as i64 - 30, 0).unwrap().to_rfc3339();
+        let mk = |id: &str, ts: &str| json!({
+            "type": "assistant",
+            "timestamp": ts,
+            "message": {
+                "id": id,
+                "model": "claude-sonnet-4-6",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 0, "output_tokens": 100_000}
+            }
+        }).to_string();
+        let l1 = mk("a1", &ts1);
+        let l2 = mk("a2", &ts2);
+        let lines: Vec<&str> = vec![&l1, &l2];
+        let stats = compute_session_stats(&lines);
+        assert!((stats.total_cost_usd - 3.0).abs() < 1e-6, "cost={}", stats.total_cost_usd);
+        assert!((stats.cost_speed_usd_per_min - 6.0).abs() < 1e-6, "cost_speed={}", stats.cost_speed_usd_per_min);
     }
 
     // ── extract_model tests ─────────────────────────────────────────────────

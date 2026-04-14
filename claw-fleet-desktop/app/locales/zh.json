@@ -143,6 +143,11 @@
     "unit": "tok/s",
     "no_data": "暂无数据"
   },
+  "cost_chart": {
+    "title": "花费速度",
+    "unit": "$/分钟",
+    "window_total": "5 分钟窗口: ${{amount}}"
+  },
   "tray": {
     "show": "显示",
     "hide": "隐藏",
@@ -185,7 +190,9 @@
     "tip_slug": "会话 ID 标识：{{slug}}",
     "tip_tokens": "已生成的 Token 总数",
     "tip_speed": "Token 输出速度",
-    "tip_context": "上下文窗口使用率：{{percent}}%"
+    "tip_context": "上下文窗口使用率：{{percent}}%",
+    "tip_cost": "会话花费 (USD)",
+    "tip_cost_agent": "自身: ${{self}} · Agent 合计 (主 + 子代理): ${{total}}"
   },
   "onboarding": {
     "welcome": "欢迎使用 Claw Fleet",

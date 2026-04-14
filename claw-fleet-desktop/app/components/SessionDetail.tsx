@@ -101,6 +101,11 @@ export function SessionDetail() {
                 <span className={styles.tokens}>
                   {liveSession.totalOutputTokens.toLocaleString()} {t("tokens_out")}
                 </span>
+                {(liveSession.totalCostUsd ?? 0) >= 0.005 && (
+                  <span className={styles.cost} title={t("card.tip_cost")}>
+                    ${liveSession.totalCostUsd.toFixed(2)}
+                  </span>
+                )}
                 {liveSession.contextPercent != null && (
                   <span
                     className={`${styles.context} ${liveSession.contextPercent >= 0.8 ? styles.context_high : ""}`}

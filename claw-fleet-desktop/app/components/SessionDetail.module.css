@@ -102,6 +102,11 @@
   color: var(--color-text-dim);
 }
 
+.cost {
+  font-size: 11px;
+  color: var(--color-text-dim);
+}
+
 .context {
   font-size: 11px;
   color: var(--color-text-dim);

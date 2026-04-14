@@ -69,9 +69,16 @@ export interface SpeedSample {
   speed: number;
 }
 
+export interface CostSample {
+  time: number;
+  /** Aggregate cost rate across all active sessions, in USD/min. */
+  costPerMin: number;
+}
+
 interface SessionsState {
   sessions: SessionInfo[];
   speedHistory: SpeedSample[];
+  costHistory: CostSample[];
   scanReady: boolean;
   setSessions: (sessions: SessionInfo[]) => void;
   setScanReady: (ready: boolean) => void;
@@ -83,17 +90,25 @@ const SPEED_WINDOW_MS = 5 * 60 * 1000;
 export const useSessionsStore = create<SessionsState>((set) => ({
   sessions: [],
   speedHistory: [],
+  costHistory: [],
   scanReady: false,
   setSessions: (sessions) =>
     set((state) => {
       const totalSpeed = sessions.reduce((sum, s) => sum + s.tokenSpeed, 0);
+      const totalCostPerMin = sessions.reduce(
+        (sum, s) => sum + (s.costSpeedUsdPerMin ?? 0),
+        0,
+      );
       const now = Date.now();
-      const newSample: SpeedSample = { time: now, speed: totalSpeed };
       const windowStart = now - SPEED_WINDOW_MS;
-      const speedHistory = [...state.speedHistory, newSample].filter(
+      const speedHistory = [...state.speedHistory, { time: now, speed: totalSpeed }].filter(
         (s) => s.time >= windowStart,
       );
-      return { sessions, speedHistory };
+      const costHistory = [
+        ...state.costHistory,
+        { time: now, costPerMin: totalCostPerMin },
+      ].filter((s) => s.time >= windowStart);
+      return { sessions, speedHistory, costHistory };
     }),
   setScanReady: (ready) => set({ scanReady: ready }),
   refresh: async () => {

@@ -236,6 +236,35 @@ function TokenSpeed({ speed }: { speed: number }) {
   );
 }
 
+// ── Cost ──────────────────────────────────────────────────────────────────────
+
+function SessionCost({ session }: { session: SessionInfo }) {
+  const { t } = useTranslation();
+  if ((session.totalCostUsd ?? 0) < 0.005 && (session.agentTotalCostUsd ?? 0) < 0.005) {
+    return null;
+  }
+  const self = (session.totalCostUsd ?? 0).toFixed(2);
+  // Show the aggregate only on a main session when subagents added something.
+  const agentTotal = session.agentTotalCostUsd ?? 0;
+  const hasSubagentCost =
+    !session.isSubagent && agentTotal > (session.totalCostUsd ?? 0) + 0.005;
+  return (
+    <span
+      className={styles.cost}
+      title={
+        hasSubagentCost
+          ? t("card.tip_cost_agent", { self, total: agentTotal.toFixed(2) })
+          : t("card.tip_cost")
+      }
+    >
+      ${self}
+      {hasSubagentCost && (
+        <span className={styles.cost_total}> · ${agentTotal.toFixed(2)}</span>
+      )}
+    </span>
+  );
+}
+
 // ── Time ago ──────────────────────────────────────────────────────────────────
 
 function TimeAgo({ ms }: { ms: number }) {
@@ -392,6 +421,7 @@ export function SessionCard({ session, isSelected, onClick, variant, hideHeader 
         <span className={styles.tokens} title={t("card.tip_tokens")}>
           {session.totalOutputTokens.toLocaleString()} {t("tokens")}
         </span>
+        <SessionCost session={session} />
         {session.contextPercent != null && (
           <span
             className={`${styles.context} ${session.contextPercent >= 0.8 ? styles.context_high : ""}`}

@@ -16,6 +16,7 @@ import { MobileAccessPanel } from "./MobileAccessPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import styles from "./SessionList.module.css";
 import { TokenSpeedChart } from "./TokenSpeedChart";
+import { CostSpeedChart } from "./CostSpeedChart";
 import { UsagePanel } from "./UsagePanel";
 import { useSessionSearch } from "../hooks/useSessionSearch";
 import { getItem, setItem } from "../storage";
@@ -256,6 +257,9 @@ export function SessionList() {
           <div data-wizard="token-speed">
             <TokenSpeedChart />
           </div>
+
+          {/* Cost Speed Chart (collapsed by default) */}
+          <CostSpeedChart />
 
           {/* Usage panel */}
           <UsagePanel />

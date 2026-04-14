@@ -9,6 +9,30 @@
   align-items: baseline;
   justify-content: space-between;
   margin-bottom: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+}
+
+.title_row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chevron {
+  font-size: 9px;
+  color: var(--color-text-dim);
+  display: inline-block;
+  transition: transform 120ms ease;
+}
+
+.chevron_collapsed {
+  transform: rotate(-90deg);
 }
 
 .title {
@@ -37,6 +61,13 @@
   align-items: center;
   justify-content: center;
   font-size: 11px;
+  color: var(--color-text-dim);
+}
+
+.window_total {
+  margin-top: 4px;
+  text-align: right;
+  font-size: 10px;
   color: var(--color-text-dim);
 }
 

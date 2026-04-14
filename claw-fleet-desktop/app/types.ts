@@ -24,6 +24,9 @@ export interface SessionInfo {
   status: SessionStatus;
   tokenSpeed: number;
   totalOutputTokens: number;
+  totalCostUsd: number;
+  agentTotalCostUsd: number;
+  costSpeedUsdPerMin: number;
   lastMessagePreview: string | null;
   lastActivityMs: number;
   createdAtMs: number;

@@ -8,6 +8,7 @@ import {
   YAxis,
 } from "recharts";
 import { useSessionsStore } from "../store";
+import { useCollapsed } from "./useCollapsed";
 import styles from "./TokenSpeedChart.module.css";
 
 function formatTime(ms: number): string {
@@ -20,6 +21,7 @@ const WINDOW_MS = 5 * 60 * 1000;
 export function TokenSpeedChart() {
   const { t } = useTranslation();
   const speedHistory = useSessionsStore((s) => s.speedHistory);
+  const [collapsed, setCollapsed] = useCollapsed("token-speed-chart", false);
 
   const currentSpeed =
     speedHistory.length > 0 ? speedHistory[speedHistory.length - 1].speed : 0;
@@ -31,68 +33,78 @@ export function TokenSpeedChart() {
 
   return (
     <div className={styles.panel}>
-      <div className={styles.header}>
-        <span className={styles.title}>{t("chart.title")}</span>
+      <button
+        type="button"
+        className={styles.header}
+        onClick={() => setCollapsed(!collapsed)}
+        aria-expanded={!collapsed}
+      >
+        <span className={styles.title_row}>
+          <span className={`${styles.chevron} ${collapsed ? styles.chevron_collapsed : ""}`}>▾</span>
+          <span className={styles.title}>{t("chart.title")}</span>
+        </span>
         <span className={styles.current}>
           {currentSpeed.toFixed(1)}{" "}
           <span className={styles.unit}>{t("chart.unit")}</span>
         </span>
-      </div>
+      </button>
 
-      {speedHistory.length < 2 ? (
-        <div className={styles.no_data}>{t("chart.no_data")}</div>
-      ) : (
-        <ResponsiveContainer width="100%" height={80}>
-          <AreaChart
-            data={speedHistory}
-            margin={{ top: 4, right: 4, left: -20, bottom: 0 }}
-          >
-            <defs>
-              <linearGradient id="speedGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="var(--color-accent)" stopOpacity={0.4} />
-                <stop offset="95%" stopColor="var(--color-accent)" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <XAxis
-              dataKey="time"
-              type="number"
-              scale="time"
-              domain={[domainStart, domainEnd]}
-              tickFormatter={formatTime}
-              tick={{ fontSize: 9, fill: "var(--color-text-dim)" }}
-              tickLine={false}
-              axisLine={false}
-              interval="preserveStartEnd"
-              minTickGap={40}
-            />
-            <YAxis
-              tick={{ fontSize: 9, fill: "var(--color-text-dim)" }}
-              tickLine={false}
-              axisLine={false}
-              width={30}
-            />
-            <Tooltip
-              contentStyle={{
-                background: "var(--color-bg-secondary)",
-                border: "1px solid var(--color-border)",
-                borderRadius: 6,
-                fontSize: 11,
-                color: "var(--color-text)",
-              }}
-              labelFormatter={(v) => formatTime(v as number)}
-              formatter={(v) => [`${(v as number).toFixed(1)} tok/s`, ""]}
-            />
-            <Area
-              type="monotone"
-              dataKey="speed"
-              stroke="var(--color-accent)"
-              strokeWidth={1.5}
-              fill="url(#speedGrad)"
-              dot={false}
-              isAnimationActive={false}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
+      {!collapsed && (
+        speedHistory.length < 2 ? (
+          <div className={styles.no_data}>{t("chart.no_data")}</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={80}>
+            <AreaChart
+              data={speedHistory}
+              margin={{ top: 4, right: 4, left: -20, bottom: 0 }}
+            >
+              <defs>
+                <linearGradient id="speedGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--color-accent)" stopOpacity={0.4} />
+                  <stop offset="95%" stopColor="var(--color-accent)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <XAxis
+                dataKey="time"
+                type="number"
+                scale="time"
+                domain={[domainStart, domainEnd]}
+                tickFormatter={formatTime}
+                tick={{ fontSize: 9, fill: "var(--color-text-dim)" }}
+                tickLine={false}
+                axisLine={false}
+                interval="preserveStartEnd"
+                minTickGap={40}
+              />
+              <YAxis
+                tick={{ fontSize: 9, fill: "var(--color-text-dim)" }}
+                tickLine={false}
+                axisLine={false}
+                width={30}
+              />
+              <Tooltip
+                contentStyle={{
+                  background: "var(--color-bg-secondary)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: 6,
+                  fontSize: 11,
+                  color: "var(--color-text)",
+                }}
+                labelFormatter={(v) => formatTime(v as number)}
+                formatter={(v) => [`${(v as number).toFixed(1)} tok/s`, ""]}
+              />
+              <Area
+                type="monotone"
+                dataKey="speed"
+                stroke="var(--color-accent)"
+                strokeWidth={1.5}
+                fill="url(#speedGrad)"
+                dot={false}
+                isAnimationActive={false}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        )
       )}
     </div>
   );
