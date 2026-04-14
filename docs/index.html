@@ -262,6 +262,8 @@
       font-size: 11px; color: var(--text-dim);
     }
     .session-card-speed { color: var(--green); font-family: var(--font-mono); font-weight: 600; }
+    .session-card-cost { color: var(--text-dim); font-family: var(--font-mono); }
+    .session-card-cost-total { color: var(--amber); font-weight: 500; margin-left: 2px; }
     .session-card-ctx { display: flex; align-items: center; gap: 6px; }
     .ctx-bar { width: 48px; height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; }
     .ctx-fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
@@ -317,6 +319,7 @@
     .metric-value { font-size: 28px; font-weight: 700; font-family: var(--font-mono); margin-bottom: 4px; }
     .metric-label { font-size: 12px; color: var(--text-dim); }
     .metric-highlight { color: var(--accent-bright); }
+    .metric-cost { color: var(--amber); }
 
     .report-body { padding: 0 16px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .report-summary {
@@ -530,10 +533,10 @@
       </div>
       <div class="hero-agents">
         <span class="hero-agent"><span>Works with:</span></span>
-        <span class="hero-agent"><img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/src/assets/icons/claude.svg" alt="Claude Code"> Claude Code</span>
-        <span class="hero-agent"><img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/src/assets/icons/cursor.svg" alt="Cursor"> Cursor</span>
-        <span class="hero-agent"><img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/src/assets/icons/codex.svg" alt="Codex"> Codex</span>
-        <span class="hero-agent"><img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/src/assets/icons/openclaw.svg" alt="OpenClaw"> OpenClaw</span>
+        <span class="hero-agent"><img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/claw-fleet-desktop/app/assets/icons/claude.svg" alt="Claude Code"> Claude Code</span>
+        <span class="hero-agent"><img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/claw-fleet-desktop/app/assets/icons/cursor.svg" alt="Cursor"> Cursor</span>
+        <span class="hero-agent"><img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/claw-fleet-desktop/app/assets/icons/codex.svg" alt="Codex"> Codex</span>
+        <span class="hero-agent"><img src="https://raw.githubusercontent.com/hoveychen/claw-fleet/main/claw-fleet-desktop/app/assets/icons/openclaw.svg" alt="OpenClaw"> OpenClaw</span>
       </div>
       <div class="hero-screenshot reveal">
         <img src="screenshots/01_gallery.png" alt="Claw Fleet Gallery View" loading="lazy">
@@ -609,6 +612,7 @@
                     <div class="session-card-footer">
                       <span class="session-card-model">claude-opus-4</span>
                       <span class="session-card-speed" data-speed="12.3">12.3 tok/s</span>
+                      <span class="session-card-cost" title="Self: $0.42 · Agent total (main + subagents): $1.87">$0.42<span class="session-card-cost-total"> · $1.87</span></span>
                       <span class="session-card-ctx">
                         <span class="ctx-bar"><span class="ctx-fill ctx-fill-low" style="width:34%"></span></span>
                         34%
@@ -630,6 +634,7 @@
                     <div class="session-card-footer">
                       <span class="session-card-model">claude-sonnet-4</span>
                       <span class="session-card-speed" data-speed="8.7">8.7 tok/s</span>
+                      <span class="session-card-cost" title="Session cost (USD)">$0.18</span>
                       <span class="session-card-ctx">
                         <span class="ctx-bar"><span class="ctx-fill ctx-fill-low" style="width:12%"></span></span>
                         12%
@@ -651,6 +656,7 @@
                     <div class="session-card-footer">
                       <span class="session-card-model">claude-opus-4</span>
                       <span class="session-card-speed" data-speed="15.2">15.2 tok/s</span>
+                      <span class="session-card-cost" title="Session cost (USD)">$0.64</span>
                       <span class="session-card-ctx">
                         <span class="ctx-bar"><span class="ctx-fill ctx-fill-low" style="width:8%"></span></span>
                         8%
@@ -682,6 +688,7 @@
                     <div class="session-card-footer">
                       <span class="session-card-model">claude-opus-4</span>
                       <span class="session-card-speed" data-speed="22.5">22.5 tok/s</span>
+                      <span class="session-card-cost" title="Session cost (USD)">$2.31</span>
                       <span class="session-card-ctx">
                         <span class="ctx-bar"><span class="ctx-fill ctx-fill-mid" style="width:72%"></span></span>
                         72%
@@ -703,6 +710,7 @@
                     <div class="session-card-footer">
                       <span class="session-card-model">claude-opus-4</span>
                       <span class="session-card-speed" data-speed="0">0 tok/s</span>
+                      <span class="session-card-cost" title="Session cost (USD)">$3.08</span>
                       <span class="session-card-ctx">
                         <span class="ctx-bar"><span class="ctx-fill ctx-fill-high" style="width:89%"></span></span>
                         89%
@@ -865,8 +873,8 @@
                 <div class="metric-label">Sessions</div>
               </div>
               <div class="metric-card">
-                <div class="metric-value">287</div>
-                <div class="metric-label">Tool Calls</div>
+                <div class="metric-value metric-cost">$4.23</div>
+                <div class="metric-label">Total Cost (USD)</div>
               </div>
             </div>
             <div class="report-body">

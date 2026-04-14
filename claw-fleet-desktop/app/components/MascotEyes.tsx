@@ -347,7 +347,7 @@ export function MascotEyes({ embedded, onQuip }: { embedded?: boolean; onQuip?: 
 
   // ── Dynamic quip generation ────────────────────────────────────────────────
   const fetchQuips = useCallback(async (currentSessions: SessionInfo[]) => {
-    if (getItem("personalized-mascot") === "false") return;
+    if (getItem("personalized-mascot") !== "true") return;
     const busyStatuses = ["thinking", "executing", "streaming", "processing", "active", "delegating"];
     // Recent non-subagent sessions sorted by creation time (newest first)
     const recentMain = [...currentSessions]

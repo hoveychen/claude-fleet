@@ -224,7 +224,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
 
   // ── Personalized mascot state ──────────────────────────────────────────
   const [personalizedMascot, setPersonalizedMascot] = useState(
-    () => getItem("personalized-mascot") !== "false",
+    () => getItem("personalized-mascot") === "true",
   );
 
   const handleTogglePersonalizedMascot = useCallback((enabled: boolean) => {

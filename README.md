@@ -36,10 +36,10 @@ Claw Fleet can monitor sessions from multiple AI coding agents:
 
 | | Agent | Status |
 |---|---|---|
-| <picture><source media="(prefers-color-scheme: dark)" srcset="src/assets/icons/claude.svg"><source media="(prefers-color-scheme: light)" srcset="src/assets/icons/claude-dark.svg"><img src="src/assets/icons/claude-dark.svg" width="24" height="24"></picture> | **Claude Code** | Fully supported — enabled by default |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="src/assets/icons/cursor.svg"><source media="(prefers-color-scheme: light)" srcset="src/assets/icons/cursor-dark.svg"><img src="src/assets/icons/cursor-dark.svg" width="24" height="24"></picture> | **Cursor** | Supported — opt-in via Settings |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="src/assets/icons/openclaw.svg"><source media="(prefers-color-scheme: light)" srcset="src/assets/icons/openclaw-dark.svg"><img src="src/assets/icons/openclaw-dark.svg" width="24" height="24"></picture> | **OpenClaw** | Fully supported |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="src/assets/icons/codex.svg"><source media="(prefers-color-scheme: light)" srcset="src/assets/icons/codex-dark.svg"><img src="src/assets/icons/codex-dark.svg" width="24" height="24"></picture> | **Codex** | Fully supported |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="claw-fleet-desktop/app/assets/icons/claude.svg"><source media="(prefers-color-scheme: light)" srcset="claw-fleet-desktop/app/assets/icons/claude-dark.svg"><img src="claw-fleet-desktop/app/assets/icons/claude-dark.svg" width="24" height="24"></picture> | **Claude Code** | Fully supported — enabled by default |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="claw-fleet-desktop/app/assets/icons/cursor.svg"><source media="(prefers-color-scheme: light)" srcset="claw-fleet-desktop/app/assets/icons/cursor-dark.svg"><img src="claw-fleet-desktop/app/assets/icons/cursor-dark.svg" width="24" height="24"></picture> | **Cursor** | Supported — opt-in via Settings |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="claw-fleet-desktop/app/assets/icons/openclaw.svg"><source media="(prefers-color-scheme: light)" srcset="claw-fleet-desktop/app/assets/icons/openclaw-dark.svg"><img src="claw-fleet-desktop/app/assets/icons/openclaw-dark.svg" width="24" height="24"></picture> | **OpenClaw** | Fully supported |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="claw-fleet-desktop/app/assets/icons/codex.svg"><source media="(prefers-color-scheme: light)" srcset="claw-fleet-desktop/app/assets/icons/codex-dark.svg"><img src="claw-fleet-desktop/app/assets/icons/codex-dark.svg" width="24" height="24"></picture> | **Codex** | Fully supported |
 
 > Toggle agent sources on or off in the app's Settings panel. Claw Fleet auto-detects which tools are installed on your system.
 

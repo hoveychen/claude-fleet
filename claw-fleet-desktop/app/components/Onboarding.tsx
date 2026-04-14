@@ -753,7 +753,7 @@ export function Onboarding({ onDismiss }: { onDismiss: () => void }) {
 
   // ── Mascot & overlay state ──────────────────────────────────────────────
   const [personalizedMascot, setPersonalizedMascot] = useState(
-    () => getItem("personalized-mascot") !== "false",
+    () => getItem("personalized-mascot") === "true",
   );
   const overlayEnabled = useOverlayStore((s) => s.enabled);
   const setOverlayEnabled = useOverlayStore((s) => s.setEnabled);
