@@ -5,7 +5,7 @@
 # Claw Fleet
 
 **Mission control for your AI coding agents.**
-Monitor every session, track token throughput, get AI-generated daily summaries and lessons learned — all from one place.
+Monitor every session, track token throughput **and live USD spend**, get AI-generated daily summaries and lessons learned — all from one place.
 Supports **Claude Code**, **Cursor**, **OpenClaw**, and **Codex**.
 
 [![Release](https://img.shields.io/github/v/release/hoveychen/claw-fleet?style=flat-square&logo=github&color=d97757)](https://github.com/hoveychen/claw-fleet/releases/latest)
@@ -99,6 +99,8 @@ Claw Fleet can monitor sessions from multiple AI coding agents:
 **Lessons learned — AI mistakes become team knowledge.** Claw Fleet scans session logs for missteps — wrong assumptions, failed approaches, repeated retries — and extracts concise lessons. One click adds them to your `CLAUDE.md`, so agents never repeat the same mistakes. This is how your fleet gets smarter over time.
 
 **8 live statuses, not just "running".** Your agents are thinking, executing, streaming, delegating, or waiting for you — Claw Fleet tells you which, with parent-child hierarchies grouped automatically. Stuck agent? Kill it from the dashboard.
+
+**Cost tracker that reflects what you actually pay.** Token speed tells you how fast an agent is streaming; it doesn't tell you what it's costing you. Claw Fleet shows live **USD spend per session** on every card, plus a fleet-wide **`$/min` rate chart** with a rolling 5-minute window total — fully accounting for cached reads, cache writes, input vs. output pricing, and per-model rates. For a main agent that delegates, you see both its own cost and the aggregate including every subagent it spawned. Catch a runaway loop before it drains your account, and finally know which project is burning your budget.
 
 **Security audit built in.** Every Bash command your agents run gets scanned and classified by risk. `sudo`, `git push --force`, `rm -rf` — you'll catch the dangerous ones before they become incidents.
 
