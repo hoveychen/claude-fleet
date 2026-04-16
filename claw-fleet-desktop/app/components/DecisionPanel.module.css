@@ -1,13 +1,68 @@
-/* ── Panel: bottom section containing card area + tab bar ─────────────────── */
+/* ── Panel: floating overlay anchored to bottom-right ─────────────────────── */
 
 .panel {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
+  width: 460px;
+  max-width: calc(100vw - 24px);
   max-height: 60vh;
-  border-top: 1px solid var(--color-border);
+  border-radius: 10px;
+  border: 1.5px solid #2b6cb0;
+  box-shadow:
+    0 0 0 1px rgba(43, 108, 176, 0.15),
+    0 0 20px rgba(43, 108, 176, 0.25),
+    0 8px 32px rgba(0, 0, 0, 0.35);
   background: var(--color-bg-sidebar);
+  animation: panelSlideIn 0.3s ease;
 }
+
+@keyframes panelSlideIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(16px) scale(0.97); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
+/* Pulsing glow ring to attract attention */
+.panel::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 12px;
+  border: 2px solid rgba(43, 108, 176, 0.5);
+  animation: pulseGlow 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.4; box-shadow: 0 0 8px rgba(43, 108, 176, 0.2); }
+  50%      { opacity: 1;   box-shadow: 0 0 20px rgba(43, 108, 176, 0.5); }
+}
+
+/* Guard variant: red glow */
+.panel_guard {
+  border-color: #e53e3e;
+  box-shadow:
+    0 0 0 1px rgba(229, 62, 62, 0.15),
+    0 0 20px rgba(229, 62, 62, 0.25),
+    0 8px 32px rgba(0, 0, 0, 0.35);
+}
+
+.panel_guard::before {
+  border-color: rgba(229, 62, 62, 0.5);
+  animation: pulseGlowRed 2s ease-in-out infinite;
+}
+
+@keyframes pulseGlowRed {
+  0%, 100% { opacity: 0.4; box-shadow: 0 0 8px rgba(229, 62, 62, 0.2); }
+  50%      { opacity: 1;   box-shadow: 0 0 20px rgba(229, 62, 62, 0.5); }
+}
+
+/* Elicitation variant (default blue, explicit for clarity) */
+.panel_elicitation {}
 
 /* ── Card area: scrollable, shows the active decision card ───────────────── */
 
@@ -33,6 +88,7 @@
   background: var(--color-bg);
   overflow-x: auto;
   flex-shrink: 0;
+  border-radius: 0 0 10px 10px;
 }
 
 /* Hide scrollbar on the tab bar */
@@ -102,7 +158,7 @@
   background: var(--color-bg-card);
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  padding: 12px 14px;
+  padding: 14px 16px;
 }
 
 .card_header {
@@ -120,7 +176,7 @@
 }
 
 .card_title {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--color-text);
   flex: 1;
@@ -138,7 +194,7 @@
 /* Command block */
 .command {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--color-text);
   background: var(--color-bg-tool);
@@ -169,7 +225,7 @@
 
 /* Analysis section */
 .analysis {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.55;
   color: var(--color-text);
   background: var(--color-bg-tool);
@@ -185,6 +241,44 @@
   font-style: italic;
 }
 
+/* Markdown reset inside analysis & question blocks */
+.analysis p,
+.elicitation_question_text p {
+  margin: 0 0 0.4em;
+}
+
+.analysis p:last-child,
+.elicitation_question_text p:last-child {
+  margin-bottom: 0;
+}
+
+.analysis code,
+.elicitation_question_text code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--color-bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.analysis strong,
+.elicitation_question_text strong {
+  font-weight: 600;
+}
+
+.analysis ol,
+.analysis ul,
+.elicitation_question_text ol,
+.elicitation_question_text ul {
+  margin: 0.3em 0;
+  padding-left: 1.4em;
+}
+
+.analysis li,
+.elicitation_question_text li {
+  margin-bottom: 0.2em;
+}
+
 /* Action buttons */
 .actions {
   display: flex;
@@ -193,7 +287,7 @@
 }
 
 .btn {
-  padding: 5px 16px;
+  padding: 6px 18px;
   border-radius: 5px;
   border: 1px solid var(--color-border);
   background: var(--color-bg-card);
@@ -295,7 +389,7 @@
 }
 
 .elicitation_question_text {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--color-text);
   margin-bottom: 6px;
@@ -344,13 +438,13 @@
 }
 
 .elicitation_option_label {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--color-text);
 }
 
 .elicitation_option_desc {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--color-text-secondary);
   line-height: 1.4;
 }

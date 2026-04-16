@@ -73,17 +73,31 @@ echo "==> Building Tauri app..."
 (cd claw-fleet-desktop && npx tauri build --bundles app)
 
 # 4. Sign with entitlements (macOS only)
+#    Sign the fleet CLI sidecar FIRST with its own (non-sandbox) entitlements,
+#    then sign the outer app bundle.  Using --deep would overwrite the sidecar
+#    signature with the app's sandbox entitlements, causing SIGTRAP when the
+#    sidecar is invoked externally (e.g. by Claude Code hooks).
 APP_BUNDLE="target/$MODE/bundle/macos/Claw Fleet.app"
+SIDECAR="$APP_BUNDLE/Contents/MacOS/fleet"
 if [[ -d "$APP_BUNDLE" ]]; then
   if [[ -n "$APPLE_SIGNING_IDENTITY" ]]; then
-    echo "==> Signing with Developer ID + sandbox entitlements..."
-    codesign --force --deep --sign "$APPLE_SIGNING_IDENTITY" \
+    echo "==> Signing sidecar (fleet CLI) with non-sandbox entitlements..."
+    codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
+      --entitlements claw-fleet-desktop/entitlements-sidecar.plist \
+      --options runtime \
+      "$SIDECAR"
+    echo "==> Signing app bundle with sandbox entitlements..."
+    codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
       --entitlements claw-fleet-desktop/entitlements.plist \
       --options runtime \
       "$APP_BUNDLE"
   else
-    echo "==> Ad-hoc signing with entitlements (sandbox won't be enforced)..."
-    codesign --force --deep --sign - \
+    echo "==> Ad-hoc signing sidecar with non-sandbox entitlements..."
+    codesign --force --sign - \
+      --entitlements claw-fleet-desktop/entitlements-sidecar.plist \
+      "$SIDECAR"
+    echo "==> Ad-hoc signing app bundle with entitlements..."
+    codesign --force --sign - \
       --entitlements claw-fleet-desktop/entitlements.plist \
       "$APP_BUNDLE"
   fi

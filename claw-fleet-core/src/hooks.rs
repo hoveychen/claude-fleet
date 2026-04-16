@@ -253,7 +253,7 @@ pub fn apply_guard_hook() -> Result<(), String> {
     }
 
     let guard_group = json!({
-        "matcher": { "tool_name": "Bash" },
+        "matcher": "Bash",
         "hooks": [{
             "type": "command",
             "command": fault_tolerant_command(&fleet_bin, "guard"),
@@ -344,7 +344,7 @@ pub fn apply_elicitation_hook() -> Result<(), String> {
     }
 
     let elicitation_group = json!({
-        "matcher": { "tool_name": "AskUserQuestion" },
+        "matcher": "AskUserQuestion",
         "hooks": [{
             "type": "command",
             "command": fault_tolerant_command(&fleet_bin, "elicitation"),

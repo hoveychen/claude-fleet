@@ -915,15 +915,26 @@ export function Onboarding({ mode, onDismiss }: { mode: OnboardingMode; onDismis
     return sources.filter((s) => s.available).length > 1;
   }, [sources]);
 
-  // Wrap onDismiss: mark all features as seen + restart if sources changed
-  const handleDismiss = useCallback(() => {
+  // Wrap onDismiss: mark all features as seen, apply default-on hooks, + restart if sources changed
+  const handleDismiss = useCallback(async () => {
+    // Apply hooks that are checked by default but were never toggled by the user
+    if (guardEnabled) {
+      await invoke("apply_guard_hook").catch((e: unknown) =>
+        console.error("apply guard on dismiss:", e),
+      );
+    }
+    if (elicitationEnabled) {
+      await invoke("apply_elicitation_hook").catch((e: unknown) =>
+        console.error("apply elicitation on dismiss:", e),
+      );
+    }
     markFeaturesSeen([...ONBOARDING_FEATURES]);
     if (sourcesChanged.current) {
       invoke("restart_app");
     } else {
       onDismiss();
     }
-  }, [onDismiss]);
+  }, [onDismiss, guardEnabled, elicitationEnabled]);
 
   const check = useCallback(async () => {
     setLoading(true);

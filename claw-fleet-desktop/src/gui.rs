@@ -890,17 +890,21 @@ fn respond_to_guard(state: tauri::State<AppState>, id: String, allow: bool) -> R
 }
 
 #[tauri::command]
-fn analyze_guard_command(
-    state: tauri::State<AppState>,
+async fn analyze_guard_command(
+    state: tauri::State<'_, AppState>,
     command: String,
     context: String,
     lang: String,
 ) -> Result<String, String> {
-    state
-        .backend
-        .read()
-        .unwrap()
-        .analyze_guard_command(&command, &context, &lang)
+    let backend = state.backend.clone();
+    tokio::task::spawn_blocking(move || {
+        backend
+            .read()
+            .unwrap()
+            .analyze_guard_command(&command, &context, &lang)
+    })
+    .await
+    .map_err(|e| format!("task join error: {e}"))?
 }
 
 // ── Elicitation (AskUserQuestion interception) ──────────────────────────────

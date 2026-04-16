@@ -4,6 +4,8 @@ import { create } from "zustand";
 import type { RemoteConnection } from "./components/ConnectionDialog";
 import type { DailyReport, DailyReportStats, ElicitationRequest, GuardRequest, Lesson, PendingDecision, RawMessage, SessionInfo, WaitingAlert } from "./types";
 import { getItem, setItem } from "./storage";
+import i18n from "./i18n";
+import { playChime } from "./audio";
 
 // ── Connection store ──────────────────────────────────────────────────────────
 
@@ -489,6 +491,9 @@ export const useDecisionStore = create<DecisionState>((set, get) => ({
       activeDecisionId: s.decisions.length === 0 ? decision.id : s.activeDecisionId,
     }));
 
+    // Play chime to alert user that a decision is waiting
+    playChime("triple").catch(() => {});
+
     // Kick off LLM analysis if enabled
     const llmEnabled = getItem("guard-llm-analysis") !== "false";
     if (llmEnabled) {
@@ -499,7 +504,7 @@ export const useDecisionStore = create<DecisionState>((set, get) => ({
           const context = await invoke<string>("get_guard_context", {
             sessionId: req.sessionId,
           });
-          const lang = document.documentElement.lang?.startsWith("zh") ? "zh" : "en";
+          const lang = i18n.language?.startsWith("zh") ? "zh" : "en";
           const result = await invoke<string>("analyze_guard_command", {
             command: req.command,
             context,
@@ -527,6 +532,9 @@ export const useDecisionStore = create<DecisionState>((set, get) => ({
       decisions: [...s.decisions, decision],
       activeDecisionId: s.decisions.length === 0 ? decision.id : s.activeDecisionId,
     }));
+
+    // Play chime to alert user that a decision is waiting
+    playChime("ding_dong").catch(() => {});
   },
 
   toggleElicitationOption: (id, question, option, multiSelect) => {

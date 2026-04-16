@@ -1,6 +1,8 @@
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useDecisionStore } from "../store";
 import type {
   ElicitationDecision,
@@ -59,7 +61,7 @@ function GuardCard({ decision }: { decision: GuardDecision }) {
         <div className={`${styles.analysis} ${decision.analyzing ? styles.analysis_loading : ""}`}>
           {decision.analyzing
             ? t("guard.analyzing", "Analyzing command...")
-            : decision.analysis}
+            : <ReactMarkdown remarkPlugins={[remarkGfm]}>{decision.analysis ?? ""}</ReactMarkdown>}
         </div>
       )}
 
@@ -171,7 +173,7 @@ function ElicitationCard({ decision }: { decision: ElicitationDecision }) {
           {q.header && (
             <span className={styles.elicitation_header}>{q.header}</span>
           )}
-          {q.question}
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{q.question}</ReactMarkdown>
         </div>
         <div className={styles.elicitation_options}>
           {q.options.map((opt) => {
@@ -335,7 +337,7 @@ export function DecisionPanel() {
   const active = decisions.find((d) => d.id === activeDecisionId) ?? decisions[0];
 
   return (
-    <div className={styles.panel}>
+    <div className={`${styles.panel} ${active.kind === "guard" ? styles.panel_guard : styles.panel_elicitation}`}>
       {/* Card area — scrollable, shows the active decision */}
       <div className={styles.card_area}>
         <DecisionCard key={active.id} decision={active} />

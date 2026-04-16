@@ -296,8 +296,13 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
 
           if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
-            echo "Re-signing app with sandbox entitlements..."
-            codesign --force --deep --sign "$APPLE_SIGNING_IDENTITY" \
+            echo "Signing sidecar (fleet CLI) with non-sandbox entitlements..."
+            codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
+              --entitlements claw-fleet-desktop/entitlements-sidecar.plist \
+              --options runtime \
+              "$APP/Contents/MacOS/fleet"
+            echo "Signing app bundle with sandbox entitlements..."
+            codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
               --entitlements claw-fleet-desktop/entitlements.plist \
               --options runtime \
               "$APP"

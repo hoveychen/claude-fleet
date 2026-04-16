@@ -16,6 +16,8 @@ interface HookSetupPlan {
   toAdd: string[];
   hooksGloballyDisabled: boolean;
   alreadyInstalled: boolean;
+  guardInstalled: boolean;
+  elicitationInstalled: boolean;
 }
 
 interface SourceInfo {
@@ -133,7 +135,21 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const [hooksError, setHooksError] = useState("");
 
   useEffect(() => {
-    invoke<HookSetupPlan>("get_hooks_setup_plan").then(setHooksPlan).catch(() => {});
+    invoke<HookSetupPlan>("get_hooks_setup_plan").then((plan) => {
+      setHooksPlan(plan);
+      // Auto-apply hooks that the UI shows as enabled but were never actually installed
+      // (e.g. user dismissed onboarding without toggling the default-on checkboxes)
+      if (getItem("guard-enabled") !== "false" && !plan.guardInstalled) {
+        invoke("apply_guard_hook").catch((e: unknown) =>
+          console.error("auto-apply guard hook:", e),
+        );
+      }
+      if (getItem("elicitation-enabled") !== "false" && !plan.elicitationInstalled) {
+        invoke("apply_elicitation_hook").catch((e: unknown) =>
+          console.error("auto-apply elicitation hook:", e),
+        );
+      }
+    }).catch(() => {});
   }, []);
 
   const handleInstallHooks = useCallback(async () => {
