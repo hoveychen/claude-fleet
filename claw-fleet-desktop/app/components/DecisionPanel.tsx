@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -175,53 +175,15 @@ function ElicitationCard({ decision }: { decision: ElicitationDecision }) {
           )}
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{q.question}</ReactMarkdown>
         </div>
-        <div className={styles.elicitation_options}>
-          {q.options.map((opt) => {
-            const isSelected = selected.includes(opt.label);
-            return (
-              <button
-                key={opt.label}
-                className={`${styles.elicitation_option} ${isSelected ? styles.elicitation_option_selected : ""}`}
-                onClick={() =>
-                  toggleElicitationOption(
-                    decision.id,
-                    q.question,
-                    opt.label,
-                    q.multiSelect,
-                  )
-                }
-              >
-                <span className={styles.elicitation_option_label}>
-                  {opt.label}
-                </span>
-                {opt.description && (
-                  <span className={styles.elicitation_option_desc}>
-                    {opt.description}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-
-          <div
-            className={`${styles.elicitation_other} ${customText ? styles.elicitation_other_active : ""}`}
-            onClick={() => otherInputRef.current?.focus()}
-          >
-            <span className={styles.elicitation_option_label}>
-              {t("elicitation.other", "Other")}
-            </span>
-            <input
-              ref={otherInputRef}
-              className={styles.elicitation_other_input}
-              type="text"
-              placeholder={t("elicitation.other_placeholder", "Type your answer…")}
-              value={customText}
-              onChange={(e) =>
-                setElicitationCustomAnswer(decision.id, q.question, e.target.value)
-              }
-            />
-          </div>
-        </div>
+        <OptionsBlock
+          decisionId={decision.id}
+          question={q}
+          selected={selected}
+          onToggle={toggleElicitationOption}
+          otherInputRef={otherInputRef}
+          customText={customText}
+          onCustomChange={(val) => setElicitationCustomAnswer(decision.id, q.question, val)}
+        />
       </div>
 
       <div className={styles.actions}>
@@ -257,6 +219,96 @@ function ElicitationCard({ decision }: { decision: ElicitationDecision }) {
             {t("elicitation.next", "Next")}
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Renders the option list + "Other" input. Splits into side-by-side layout
+// when any option carries a preview (single-select only, per AskUserQuestion spec).
+function OptionsBlock({
+  decisionId,
+  question,
+  selected,
+  onToggle,
+  otherInputRef,
+  customText,
+  onCustomChange,
+}: {
+  decisionId: string;
+  question: ElicitationDecision["request"]["questions"][number];
+  selected: string[];
+  onToggle: (id: string, questionText: string, label: string, multiSelect: boolean) => void;
+  otherInputRef: React.RefObject<HTMLInputElement | null>;
+  customText: string;
+  onCustomChange: (val: string) => void;
+}) {
+  const { t } = useTranslation();
+  const hasPreview = useMemo(
+    () => !question.multiSelect && question.options.some((o) => o.preview),
+    [question],
+  );
+  const firstWithPreview = useMemo(
+    () => question.options.find((o) => o.preview)?.label ?? question.options[0]?.label ?? "",
+    [question.options],
+  );
+  const [focusedLabel, setFocusedLabel] = useState<string>(firstWithPreview);
+  useEffect(() => {
+    setFocusedLabel(firstWithPreview);
+  }, [firstWithPreview]);
+
+  const focusedPreview = question.options.find((o) => o.label === focusedLabel)?.preview;
+
+  const list = (
+    <div className={styles.elicitation_options}>
+      {question.options.map((opt) => {
+        const isSelected = selected.includes(opt.label);
+        const isFocused = hasPreview && opt.label === focusedLabel;
+        return (
+          <button
+            key={opt.label}
+            className={`${styles.elicitation_option} ${isSelected ? styles.elicitation_option_selected : ""} ${isFocused ? styles.elicitation_option_focused : ""}`}
+            onClick={() =>
+              onToggle(decisionId, question.question, opt.label, question.multiSelect)
+            }
+            onMouseEnter={hasPreview ? () => setFocusedLabel(opt.label) : undefined}
+            onFocus={hasPreview ? () => setFocusedLabel(opt.label) : undefined}
+          >
+            <span className={styles.elicitation_option_label}>{opt.label}</span>
+            {opt.description && (
+              <span className={styles.elicitation_option_desc}>{opt.description}</span>
+            )}
+          </button>
+        );
+      })}
+
+      <div
+        className={`${styles.elicitation_other} ${customText ? styles.elicitation_other_active : ""}`}
+        onClick={() => otherInputRef.current?.focus()}
+      >
+        <span className={styles.elicitation_option_label}>
+          {t("elicitation.other", "Other")}
+        </span>
+        <input
+          ref={otherInputRef}
+          className={styles.elicitation_other_input}
+          type="text"
+          placeholder={t("elicitation.other_placeholder", "Type your answer…")}
+          value={customText}
+          onChange={(e) => onCustomChange(e.target.value)}
+        />
+      </div>
+    </div>
+  );
+
+  if (!hasPreview) return list;
+  return (
+    <div className={styles.elicitation_options_with_preview}>
+      {list}
+      <div className={styles.elicitation_preview}>
+        {focusedPreview ? (
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{focusedPreview}</ReactMarkdown>
+        ) : null}
       </div>
     </div>
   );
@@ -336,8 +388,12 @@ export function DecisionPanel() {
 
   const active = decisions.find((d) => d.id === activeDecisionId) ?? decisions[0];
 
+  const hasPreview =
+    active.kind === "elicitation" &&
+    active.request.questions.some((q) => !q.multiSelect && q.options.some((o) => o.preview));
+
   return (
-    <div className={`${styles.panel} ${active.kind === "guard" ? styles.panel_guard : styles.panel_elicitation}`}>
+    <div className={`${styles.panel} ${active.kind === "guard" ? styles.panel_guard : styles.panel_elicitation} ${hasPreview ? styles.panel_wide : ""}`}>
       {/* Card area — scrollable, shows the active decision */}
       <div className={styles.card_area}>
         <DecisionCard key={active.id} decision={active} />

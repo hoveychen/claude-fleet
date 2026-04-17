@@ -444,7 +444,29 @@ fn get_user_title(state: tauri::State<AppState>) -> String {
 
 #[tauri::command]
 fn set_user_title(title: String, state: tauri::State<AppState>) {
-    *state.user_title.lock().unwrap() = title;
+    *state.user_title.lock().unwrap() = title.clone();
+    reapply_interaction_mode_if_installed(&state, &title, None);
+}
+
+/// If the interaction-mode guidance is currently installed, regenerate it with
+/// fresh title/locale values. Silent on failure — it's a convenience re-sync.
+fn reapply_interaction_mode_if_installed(
+    state: &tauri::State<AppState>,
+    title_override: &str,
+    locale_override: Option<&str>,
+) {
+    let backend = state.backend.read().unwrap();
+    let plan = backend.get_hooks_plan();
+    if !plan.interaction_mode_installed {
+        return;
+    }
+    let locale = match locale_override {
+        Some(l) => l.to_string(),
+        None => state.locale.lock().unwrap().clone(),
+    };
+    if let Err(e) = backend.apply_interaction_mode(title_override, &locale) {
+        eprintln!("re-apply interaction mode failed: {e}");
+    }
 }
 
 #[tauri::command]
@@ -920,6 +942,18 @@ fn remove_elicitation_hook(state: tauri::State<AppState>) -> Result<(), String> 
 }
 
 #[tauri::command]
+fn apply_interaction_mode(state: tauri::State<AppState>) -> Result<(), String> {
+    let title = state.user_title.lock().unwrap().clone();
+    let locale = state.locale.lock().unwrap().clone();
+    state.backend.read().unwrap().apply_interaction_mode(&title, &locale)
+}
+
+#[tauri::command]
+fn remove_interaction_mode(state: tauri::State<AppState>) -> Result<(), String> {
+    state.backend.read().unwrap().remove_interaction_mode()
+}
+
+#[tauri::command]
 fn respond_to_elicitation(
     state: tauri::State<AppState>,
     id: String,
@@ -1197,7 +1231,9 @@ fn restart_app(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn set_locale(locale: String, state: tauri::State<AppState>) {
-    *state.locale.lock().unwrap() = locale;
+    *state.locale.lock().unwrap() = locale.clone();
+    let title = state.user_title.lock().unwrap().clone();
+    reapply_interaction_mode_if_installed(&state, &title, Some(&locale));
 }
 
 // ── Waiting alerts ──────────────────────────────────────────────────────────
@@ -2024,6 +2060,8 @@ pub fn run() {
             get_guard_context,
             apply_elicitation_hook,
             remove_elicitation_hook,
+            apply_interaction_mode,
+            remove_interaction_mode,
             respond_to_elicitation,
             generate_mascot_quips,
             list_llm_providers,

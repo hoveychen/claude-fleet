@@ -23,6 +23,10 @@ use serde::{Deserialize, Serialize};
 pub struct ElicitationOption {
     pub label: String,
     pub description: String,
+    /// Optional markdown preview shown when this option is focused (from
+    /// AskUserQuestion's per-option `preview` field). Side-by-side layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
 }
 
 /// A single question from AskUserQuestion.
@@ -104,6 +108,16 @@ pub fn poll_response(id: &str, timeout: Duration) -> Option<ElicitationResponse>
         }
         std::thread::sleep(poll_interval);
     }
+}
+
+/// Non-blocking read of an elicitation response, if one exists yet.
+pub fn try_read_response(id: &str) -> Option<ElicitationResponse> {
+    let path = response_path(id)?;
+    if !path.exists() {
+        return None;
+    }
+    let content = fs::read_to_string(&path).ok()?;
+    serde_json::from_str::<ElicitationResponse>(&content).ok()
 }
 
 /// Write an elicitation response.  Called by the desktop app.

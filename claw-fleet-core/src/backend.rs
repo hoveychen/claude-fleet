@@ -279,6 +279,10 @@ pub trait Backend: Send + Sync {
         answers: std::collections::HashMap<String, String>,
     ) -> Result<(), String>;
 
+    // ── Interaction mode (global CLAUDE.md guidance) ────────────────────────
+    fn apply_interaction_mode(&self, user_title: &str, locale: &str) -> Result<(), String>;
+    fn remove_interaction_mode(&self) -> Result<(), String>;
+
     // ── Agent sources config ─────────────────────────────────────────────────
     fn get_sources_config(&self) -> Vec<crate::agent_source::SourceInfo>;
     fn set_source_enabled(&self, name: &str, enabled: bool) -> Result<(), String>;

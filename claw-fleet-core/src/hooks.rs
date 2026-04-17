@@ -15,11 +15,12 @@ use serde_json::{json, Map, Value};
 const FLEET_HOOK_COMMAND: &str =
     r#"sh -c 'cat >> "$HOME/.fleet/hooks.jsonl"'"#;
 
-/// Identity marker for the guard hook group.
-const FLEET_GUARD_MARKER: &str = "fleet guard";
-
-/// Identity marker for the elicitation hook group.
-const FLEET_ELICITATION_MARKER: &str = "fleet elicitation";
+// Identity markers for the fleet hook groups. These substrings must appear
+// verbatim in the command string produced by `fault_tolerant_command`, which
+// wraps the binary path in double quotes — so the character between `fleet`
+// and the subcommand is `"`, not a space.
+const FLEET_GUARD_MARKER: &str = "\" guard;";
+const FLEET_ELICITATION_MARKER: &str = "\" elicitation;";
 
 /// Event types we need hooks for.
 const FLEET_HOOK_EVENTS: &[&str] = &[
@@ -46,6 +47,8 @@ pub struct HookSetupPlan {
     pub guard_installed: bool,
     /// Whether the elicitation (AskUserQuestion interception) hook is installed.
     pub elicitation_installed: bool,
+    /// Whether the interaction-mode CLAUDE.md guidance is installed.
+    pub interaction_mode_installed: bool,
 }
 
 /// The "cooked" state derived from the most recent hook events for a session.
@@ -112,6 +115,7 @@ pub fn plan_hook_setup() -> HookSetupPlan {
 
     let guard_installed = has_guard_hook(&hooks_obj);
     let elicitation_installed = has_elicitation_hook(&hooks_obj);
+    let interaction_mode_installed = crate::interaction_mode::is_interaction_mode_installed();
 
     HookSetupPlan {
         to_add,
@@ -119,6 +123,7 @@ pub fn plan_hook_setup() -> HookSetupPlan {
         already_installed: all_present,
         guard_installed,
         elicitation_installed,
+        interaction_mode_installed,
     }
 }
 
@@ -248,10 +253,6 @@ pub fn apply_guard_hook() -> Result<(), String> {
         .and_then(|h| h.as_object_mut())
         .ok_or("hooks is not an object")?;
 
-    if has_guard_hook(hooks_obj) {
-        return Ok(()); // Already installed
-    }
-
     let guard_group = json!({
         "matcher": "Bash",
         "hooks": [{
@@ -261,8 +262,11 @@ pub fn apply_guard_hook() -> Result<(), String> {
         }]
     });
 
+    // Idempotent: strip any pre-existing fleet guard groups (possibly pointing
+    // at stale binary paths) before appending a fresh one.
     if let Some(existing) = hooks_obj.get_mut("PreToolUse") {
         if let Some(arr) = existing.as_array_mut() {
+            arr.retain(|group| !is_guard_group(group));
             arr.push(guard_group);
         }
     } else {
@@ -339,10 +343,6 @@ pub fn apply_elicitation_hook() -> Result<(), String> {
         .and_then(|h| h.as_object_mut())
         .ok_or("hooks is not an object")?;
 
-    if has_elicitation_hook(hooks_obj) {
-        return Ok(());
-    }
-
     let elicitation_group = json!({
         "matcher": "AskUserQuestion",
         "hooks": [{
@@ -352,8 +352,11 @@ pub fn apply_elicitation_hook() -> Result<(), String> {
         }]
     });
 
+    // Idempotent: strip any pre-existing fleet elicitation groups (possibly
+    // pointing at stale binary paths) before appending a fresh one.
     if let Some(existing) = hooks_obj.get_mut("PreToolUse") {
         if let Some(arr) = existing.as_array_mut() {
+            arr.retain(|group| !is_elicitation_group(group));
             arr.push(elicitation_group);
         }
     } else {
@@ -571,4 +574,81 @@ fn read_recent_events(path: &Path, max_lines: usize) -> Vec<HookEvent> {
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Builds the same group JSON as `apply_guard_hook` would emit.
+    fn guard_group_for(bin: &str) -> Value {
+        json!({
+            "matcher": "Bash",
+            "hooks": [{
+                "type": "command",
+                "command": fault_tolerant_command(bin, "guard"),
+                "timeout": 120000
+            }]
+        })
+    }
+
+    fn elicitation_group_for(bin: &str) -> Value {
+        json!({
+            "matcher": "AskUserQuestion",
+            "hooks": [{
+                "type": "command",
+                "command": fault_tolerant_command(bin, "elicitation"),
+                "timeout": 120000
+            }]
+        })
+    }
+
+    #[test]
+    fn guard_marker_detects_actual_generated_command() {
+        // Reproduces the dedup bug: the marker `"fleet guard"` (with a space)
+        // never matches the real command string, which is
+        // `... "/path/to/fleet" guard; ...` — i.e. a quote separates `fleet`
+        // from `guard`, not a space.
+        let group = guard_group_for("/Applications/Claw Fleet.app/Contents/MacOS/fleet");
+        assert!(
+            is_guard_group(&group),
+            "is_guard_group must recognise the command actually produced by \
+             fault_tolerant_command"
+        );
+    }
+
+    #[test]
+    fn elicitation_marker_detects_actual_generated_command() {
+        let group = elicitation_group_for("/Applications/Claw Fleet.app/Contents/MacOS/fleet");
+        assert!(
+            is_elicitation_group(&group),
+            "is_elicitation_group must recognise the command actually produced \
+             by fault_tolerant_command"
+        );
+    }
+
+    #[test]
+    fn idempotent_retain_removes_stale_groups() {
+        // Simulates what apply_*_hook's retain-then-push loop does across
+        // multiple binary paths: existing fleet groups must be filtered out
+        // regardless of which binary path they point to.
+        let mut arr = vec![
+            json!({ "matcher": "Bash", "hooks": [{"type": "command", "command": "unrelated"}] }),
+            guard_group_for("/Applications/Claw Fleet.app/Contents/MacOS/fleet"),
+            guard_group_for("/Users/x/workspace/claude-fleet/target/debug/fleet"),
+            elicitation_group_for("/Applications/Claw Fleet.app/Contents/MacOS/fleet"),
+            elicitation_group_for("/Users/x/workspace/claude-fleet/target/debug/fleet"),
+        ];
+        arr.retain(|g| !is_guard_group(g) && !is_elicitation_group(g));
+        assert_eq!(arr.len(), 1, "only the unrelated entry should survive");
+    }
+
+    #[test]
+    fn markers_do_not_cross_match() {
+        // Guard must not match elicitation group and vice versa.
+        let g = guard_group_for("/x/fleet");
+        let e = elicitation_group_for("/x/fleet");
+        assert!(!is_elicitation_group(&g));
+        assert!(!is_guard_group(&e));
+    }
 }

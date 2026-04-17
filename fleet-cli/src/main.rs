@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use claw_fleet_core::account::{fetch_account_info_blocking as fetch_account_info, AccountInfo, UsageStats};
 use claw_fleet_core::agent_source::{self, build_sources, find_source_for_path};
 use claw_fleet_core::hooks;
+use claw_fleet_core::interaction_mode;
 use claw_fleet_core::memory;
 use claw_fleet_core::skills;
 use claw_fleet_core::session::{get_claude_dir, scan_all_sources, SessionInfo, SessionStatus};
@@ -1297,6 +1298,10 @@ fn cmd_serve(port: u16, token: String) {
                     continue;
                 }
 
+                // A SSE client is connected — mark this serve as a live consumer
+                // so `fleet guard`/`fleet elicitation` know the head is reachable.
+                claw_fleet_core::consumer_heartbeat::write_heartbeat();
+
                 // Broadcast session updates
                 let sessions = scan_all_sources(&sources_bg);
                 let json = serde_json::to_string(&sessions).unwrap_or_default();
@@ -2078,6 +2083,61 @@ fn cmd_serve(port: u16, token: String) {
                 );
             }
 
+            // ── Interaction mode endpoints ───────────────────────────────────
+            "/apply_interaction_mode" => {
+                let mut body_bytes = Vec::new();
+                let _ = std::io::Read::read_to_end(&mut request.as_reader(), &mut body_bytes);
+                #[derive(serde::Deserialize)]
+                struct Req { user_title: String, locale: String }
+                match serde_json::from_slice::<Req>(&body_bytes) {
+                    Ok(req_body) => {
+                        match interaction_mode::apply_interaction_mode(&req_body.user_title, &req_body.locale) {
+                            Ok(()) => {
+                                let _ = request.respond(
+                                    tiny_http::Response::from_string(r#"{"ok":true}"#)
+                                        .with_header(json_header),
+                                );
+                            }
+                            Err(e) => {
+                                let body = serde_json::json!({"error": e}).to_string();
+                                let _ = request.respond(
+                                    tiny_http::Response::from_string(body)
+                                        .with_status_code(500)
+                                        .with_header(json_header),
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let body = serde_json::json!({"error": e.to_string()}).to_string();
+                        let _ = request.respond(
+                            tiny_http::Response::from_string(body)
+                                .with_status_code(400)
+                                .with_header(json_header),
+                        );
+                    }
+                }
+            }
+
+            "/remove_interaction_mode" => {
+                match interaction_mode::remove_interaction_mode() {
+                    Ok(()) => {
+                        let _ = request.respond(
+                            tiny_http::Response::from_string(r#"{"ok":true}"#)
+                                .with_header(json_header),
+                        );
+                    }
+                    Err(e) => {
+                        let body = serde_json::json!({"error": e}).to_string();
+                        let _ = request.respond(
+                            tiny_http::Response::from_string(body)
+                                .with_status_code(500)
+                                .with_header(json_header),
+                        );
+                    }
+                }
+            }
+
             "/elicitation/respond" => {
                 let mut body_bytes = Vec::new();
                 let _ = std::io::Read::read_to_end(&mut request.as_reader(), &mut body_bytes);
@@ -2789,11 +2849,12 @@ fn cmd_skill_install() {
 // ── Guard CLI (hook entrypoint) ─────────────────────────────────────────────
 
 fn cmd_guard() {
+    use claw_fleet_core::consumer_heartbeat;
     use claw_fleet_core::guard::{
         self, GuardClassification, GuardDecision, GuardRequest, HookInput,
     };
     use std::io::Read;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     // Read hook JSON from stdin.
     let mut input = String::new();
@@ -2817,6 +2878,14 @@ fn cmd_guard() {
             command,
             risk_tags,
         } => {
+            // No live consumer (Fleet app not running / no SSE client on
+            // `fleet serve`) — fall through silently so Claude isn't blocked
+            // by a request nobody will answer.
+            let liveness_window = Duration::from_secs(5);
+            if !consumer_heartbeat::is_consumer_alive(liveness_window) {
+                return;
+            }
+
             let session_id = hook_input
                 .session_id
                 .clone()
@@ -2847,15 +2916,16 @@ fn cmd_guard() {
                 return;
             }
 
-            // Poll for response (up to 120 seconds).
+            // Poll for response (up to 120s), bailing out early if the
+            // consumer dies mid-flight.
             let timeout = Duration::from_secs(120);
-            match guard::poll_response(&request_id, timeout) {
-                Some(resp) => {
+            let poll_interval = Duration::from_millis(200);
+            let start = Instant::now();
+            loop {
+                if let Some(resp) = guard::try_read_response(&request_id) {
                     guard::cleanup(&request_id);
                     match resp.decision {
-                        GuardDecision::Allow => {
-                            // Allow — exit without output (or explicit allow).
-                        }
+                        GuardDecision::Allow => {}
                         GuardDecision::Block => {
                             let out = serde_json::json!({
                                 "decision": "block",
@@ -2864,16 +2934,23 @@ fn cmd_guard() {
                             println!("{}", out);
                         }
                     }
+                    return;
                 }
-                None => {
-                    // Timeout — clean up and block (Critical commands).
+                if start.elapsed() > timeout {
                     guard::cleanup(&request_id);
                     let out = serde_json::json!({
                         "decision": "block",
                         "reason": "Fleet Guard: no response from Fleet app (timeout)"
                     });
                     println!("{}", out);
+                    return;
                 }
+                if !consumer_heartbeat::is_consumer_alive(liveness_window) {
+                    // Head went away while we waited — fall through silently.
+                    guard::cleanup(&request_id);
+                    return;
+                }
+                std::thread::sleep(poll_interval);
             }
         }
     }
@@ -2882,10 +2959,11 @@ fn cmd_guard() {
 // ── Elicitation CLI (hook entrypoint for AskUserQuestion) ───────────────
 
 fn cmd_elicitation() {
+    use claw_fleet_core::consumer_heartbeat;
     use claw_fleet_core::elicitation::{self, ElicitationRequest};
     use claw_fleet_core::guard::{self, HookInput};
     use std::io::Read;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     // Read hook JSON from stdin.
     let mut input = String::new();
@@ -2925,6 +3003,13 @@ fn cmd_elicitation() {
         return;
     }
 
+    // No live consumer — fall through silently; Claude Code will use its
+    // native AskUserQuestion UI.
+    let liveness_window = Duration::from_secs(5);
+    if !consumer_heartbeat::is_consumer_alive(liveness_window) {
+        return;
+    }
+
     let session_id = hook_input
         .session_id
         .clone()
@@ -2954,9 +3039,26 @@ fn cmd_elicitation() {
         return;
     }
 
-    // Poll for response (up to 120 seconds).
+    // Poll for response (up to 120s), bailing out early if the consumer
+    // dies mid-flight so Claude Code can take over with its native UI.
     let timeout = Duration::from_secs(120);
-    match elicitation::poll_response(&request_id, timeout) {
+    let poll_interval = Duration::from_millis(200);
+    let start = Instant::now();
+    let resp = loop {
+        if let Some(r) = elicitation::try_read_response(&request_id) {
+            break Some(r);
+        }
+        if start.elapsed() > timeout {
+            break None;
+        }
+        if !consumer_heartbeat::is_consumer_alive(liveness_window) {
+            // Head went away — silently fall through to Claude's native UI.
+            elicitation::cleanup(&request_id);
+            return;
+        }
+        std::thread::sleep(poll_interval);
+    };
+    match resp {
         Some(resp) => {
             elicitation::cleanup(&request_id);
             if resp.declined {

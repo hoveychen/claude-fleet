@@ -18,6 +18,7 @@ interface HookSetupPlan {
   alreadyInstalled: boolean;
   guardInstalled: boolean;
   elicitationInstalled: boolean;
+  interactionModeInstalled: boolean;
 }
 
 interface SourceInfo {
@@ -48,7 +49,7 @@ interface LlmConfig {
 
 type NotificationMode = "all" | "user_action" | "none";
 type TtsMode = "chime_and_speech" | "chime_only" | "off";
-type SettingsTab = "general" | "appearance" | "profile" | "connection" | "mobile" | "notifications" | "sound";
+type SettingsTab = "general" | "appearance" | "profile" | "connection" | "interaction" | "mobile" | "notifications" | "sound";
 
 interface MobileAccessInfo {
   running: boolean;
@@ -84,6 +85,12 @@ const tabIcons: Record<SettingsTab, React.ReactNode> = {
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M6 10l4-4" />
       <path d="M9.5 3.5l1-1a2.12 2.12 0 0 1 3 3l-1 1M6.5 12.5l-1 1a2.12 2.12 0 0 1-3-3l1-1" />
+    </svg>
+  ),
+  interaction: (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M2 4a1.5 1.5 0 0 1 1.5-1.5h6A1.5 1.5 0 0 1 11 4v3a1.5 1.5 0 0 1-1.5 1.5H6L3.5 10.5V8.5A1.5 1.5 0 0 1 2 7V4z" />
+      <path d="M6.5 8.5V9a1.5 1.5 0 0 0 1.5 1.5h2.5L13 12.5v-2A1.5 1.5 0 0 0 14 9V6a1.5 1.5 0 0 0-1.5-1.5H11" />
     </svg>
   ),
   mobile: (
@@ -149,6 +156,13 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           console.error("auto-apply elicitation hook:", e),
         );
       }
+      // Interaction mode: always re-apply on startup if enabled, to pick up
+      // any title/locale changes made while Fleet was closed.
+      if (getItem("interaction-mode-enabled") === "true") {
+        invoke("apply_interaction_mode").catch((e: unknown) =>
+          console.error("auto-apply interaction mode:", e),
+        );
+      }
     }).catch(() => {});
   }, []);
 
@@ -198,6 +212,26 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
     () => getItem("elicitation-enabled") !== "false",
   );
 
+  // ── Interaction mode state ────────────────────────────────────────────
+  const [interactionModeEnabled, setInteractionModeEnabled] = useState(
+    () => getItem("interaction-mode-enabled") === "true",
+  );
+
+  const handleToggleInteractionMode = useCallback(async (enabled: boolean) => {
+    setInteractionModeEnabled(enabled);
+    setItem("interaction-mode-enabled", enabled ? "true" : "false");
+    try {
+      if (enabled) {
+        await invoke("apply_interaction_mode");
+      } else {
+        await invoke("remove_interaction_mode");
+      }
+      invoke<HookSetupPlan>("get_hooks_setup_plan").then(setHooksPlan).catch(() => {});
+    } catch (e) {
+      console.error("interaction mode toggle failed:", e);
+    }
+  }, []);
+
   const handleToggleElicitation = useCallback(async (enabled: boolean) => {
     setElicitationEnabled(enabled);
     setItem("elicitation-enabled", enabled ? "true" : "false");
@@ -206,6 +240,12 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
         await invoke("apply_elicitation_hook");
       } else {
         await invoke("remove_elicitation_hook");
+        // Interaction mode depends on elicitation; disable it together.
+        if (getItem("interaction-mode-enabled") === "true") {
+          setInteractionModeEnabled(false);
+          setItem("interaction-mode-enabled", "false");
+          await invoke("remove_interaction_mode").catch(() => {});
+        }
       }
       invoke<HookSetupPlan>("get_hooks_setup_plan").then(setHooksPlan).catch(() => {});
     } catch (e) {
@@ -420,6 +460,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
     { key: "appearance", label: t("settings.appearance") },
     { key: "profile", label: t("settings.profile") },
     { key: "connection", label: t("settings.connection") },
+    { key: "interaction", label: t("settings.interaction") },
     { key: "mobile", label: t("settings.mobile_access") },
     { key: "notifications", label: t("settings.notifications") },
     { key: "sound", label: t("settings.sound") },
@@ -699,7 +740,53 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                   <p className={styles.hooks_error}>{t("hooks.install_error", { error: hooksError })}</p>
                 )}
 
-                <div className={styles.section_title} style={{ marginTop: 18 }}>{t("settings.guard")}</div>
+                <div className={styles.section_title} style={{ marginTop: 18 }}>{t("settings.sources")}</div>
+                <div className={styles.row}>
+                  <span className={styles.row_label} style={{ fontSize: 11, color: "var(--color-text-dim)" }}>
+                    {t("settings.sources_desc")}
+                  </span>
+                </div>
+                {sources.map((source) => (
+                  <div className={styles.row} key={source.name}>
+                    <div className={styles.source_row}>
+                      <AgentSourceIcon source={source.name} />
+                      <span className={styles.row_label}>
+                        {t(`settings.source_name.${source.name}`)}
+                      </span>
+                      {!source.available && (
+                        <span className={styles.source_unavailable}>
+                          {t("settings.source_not_detected")}
+                        </span>
+                      )}
+                    </div>
+                    <label className={styles.toggle}>
+                      <input
+                        type="checkbox"
+                        checked={source.enabled}
+                        onChange={(e) => handleToggleSource(source.name, e.target.checked)}
+                      />
+                      <span className={styles.toggle_slider} />
+                    </label>
+                  </div>
+                ))}
+                {sourcesNeedRestart && (
+                  <div className={styles.sources_restart_row}>
+                    <span className={styles.sources_restart_hint}>{t("settings.sources_restart")}</span>
+                    <button
+                      className={styles.sources_restart_btn}
+                      onClick={() => invoke("restart_app")}
+                    >
+                      {t("settings.sources_restart_btn")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Interaction ── */}
+            {activeTab === "interaction" && (
+              <div className={styles.section}>
+                <div className={styles.section_title}>{t("settings.guard")}</div>
                 <div className={styles.row}>
                   <span className={styles.row_label} style={{ fontSize: 11, color: "var(--color-text-dim)" }}>
                     {t("settings.guard_desc")}
@@ -747,46 +834,31 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                   </label>
                 </div>
 
-                <div className={styles.section_title} style={{ marginTop: 18 }}>{t("settings.sources")}</div>
+                <div className={styles.section_title} style={{ marginTop: 18 }}>{t("settings.interaction_mode")}</div>
                 <div className={styles.row}>
                   <span className={styles.row_label} style={{ fontSize: 11, color: "var(--color-text-dim)" }}>
-                    {t("settings.sources_desc")}
+                    {t("settings.interaction_mode_desc")}
                   </span>
                 </div>
-                {sources.map((source) => (
-                  <div className={styles.row} key={source.name}>
-                    <div className={styles.source_row}>
-                      <AgentSourceIcon source={source.name} />
-                      <span className={styles.row_label}>
-                        {t(`settings.source_name.${source.name}`)}
+                <div className={styles.row}>
+                  <div>
+                    <span className={styles.row_label}>{t("settings.interaction_mode_enabled")}</span>
+                    {!elicitationEnabled && (
+                      <span className={styles.row_label} style={{ fontSize: 11, color: "var(--color-text-dim)", display: "block", marginTop: 2 }}>
+                        {t("settings.interaction_mode_requires_elicitation")}
                       </span>
-                      {!source.available && (
-                        <span className={styles.source_unavailable}>
-                          {t("settings.source_not_detected")}
-                        </span>
-                      )}
-                    </div>
-                    <label className={styles.toggle}>
-                      <input
-                        type="checkbox"
-                        checked={source.enabled}
-                        onChange={(e) => handleToggleSource(source.name, e.target.checked)}
-                      />
-                      <span className={styles.toggle_slider} />
-                    </label>
+                    )}
                   </div>
-                ))}
-                {sourcesNeedRestart && (
-                  <div className={styles.sources_restart_row}>
-                    <span className={styles.sources_restart_hint}>{t("settings.sources_restart")}</span>
-                    <button
-                      className={styles.sources_restart_btn}
-                      onClick={() => invoke("restart_app")}
-                    >
-                      {t("settings.sources_restart_btn")}
-                    </button>
-                  </div>
-                )}
+                  <label className={styles.toggle}>
+                    <input
+                      type="checkbox"
+                      checked={interactionModeEnabled}
+                      disabled={!elicitationEnabled}
+                      onChange={(e) => handleToggleInteractionMode(e.target.checked)}
+                    />
+                    <span className={styles.toggle_slider} />
+                  </label>
+                </div>
               </div>
             )}
 

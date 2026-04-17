@@ -253,6 +253,7 @@ export interface GuardDecision {
 export interface ElicitationOption {
   label: string;
   description: string;
+  preview?: string;
 }
 
 export interface ElicitationQuestion {

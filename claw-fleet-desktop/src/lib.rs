@@ -146,6 +146,7 @@ impl Backend for NullBackend {
             already_installed: true,
             guard_installed: false,
             elicitation_installed: false,
+            interaction_mode_installed: false,
         }
     }
     fn apply_hooks(&self) -> Result<(), String> {
@@ -178,6 +179,12 @@ impl Backend for NullBackend {
         _: bool,
         _: std::collections::HashMap<String, String>,
     ) -> Result<(), String> {
+        Err("backend not ready".into())
+    }
+    fn apply_interaction_mode(&self, _: &str, _: &str) -> Result<(), String> {
+        Err("backend not ready".into())
+    }
+    fn remove_interaction_mode(&self) -> Result<(), String> {
         Err("backend not ready".into())
     }
     fn get_sources_config(&self) -> Vec<agent_source::SourceInfo> {

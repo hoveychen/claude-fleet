@@ -64,6 +64,11 @@
 /* Elicitation variant (default blue, explicit for clarity) */
 .panel_elicitation {}
 
+/* Wide variant: used when the active decision has a preview column to render. */
+.panel_wide {
+  width: 820px;
+}
+
 /* ── Card area: scrollable, shows the active decision card ───────────────── */
 
 .card_area {
@@ -394,6 +399,9 @@
   color: var(--color-text);
   margin-bottom: 6px;
   line-height: 1.4;
+  max-height: 32vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .elicitation_header {
@@ -412,6 +420,44 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* Side-by-side layout when any option has a `preview` (single-select only). */
+.elicitation_options_with_preview {
+  display: grid;
+  grid-template-columns: minmax(160px, 40%) 1fr;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.elicitation_options_with_preview .elicitation_options {
+  min-width: 0;
+}
+
+.elicitation_preview {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-tool);
+  color: var(--color-text);
+  overflow: auto;
+  max-height: 40vh;
+  white-space: pre-wrap;
+  overscroll-behavior: contain;
+}
+
+.elicitation_preview pre,
+.elicitation_preview code {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.elicitation_option_focused {
+  border-color: #2b6cb0;
+  box-shadow: 0 0 0 1px rgba(43, 108, 176, 0.4);
 }
 
 .elicitation_option {

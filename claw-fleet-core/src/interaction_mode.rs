@@ -1,0 +1,265 @@
+//! Interaction Mode — injects a guidance block into `~/.claude/CLAUDE.md`
+//! that steers Claude Code to route all terminal-level final output through
+//! the `AskUserQuestion` tool, so Fleet can route every wait-for-user moment
+//! into its decision panel.
+//!
+//! Install strategy:
+//!   1. Render a guidance markdown file at `~/.claude/fleet-interaction-mode.md`
+//!      with the user's title and locale interpolated.
+//!   2. Inject a sentinel-wrapped `@~/.claude/fleet-interaction-mode.md` import
+//!      line into `~/.claude/CLAUDE.md`.
+//!
+//! Uninstall removes both.
+
+use std::fs;
+use std::path::PathBuf;
+
+const BEGIN_MARKER: &str = "<!-- fleet:interaction-mode:begin -->";
+const END_MARKER: &str = "<!-- fleet:interaction-mode:end -->";
+
+fn claude_dir() -> Option<PathBuf> {
+    crate::session::real_home_dir().map(|h| h.join(".claude"))
+}
+
+fn guidance_file_path() -> Option<PathBuf> {
+    claude_dir().map(|d| d.join("fleet-interaction-mode.md"))
+}
+
+fn claude_md_path() -> Option<PathBuf> {
+    claude_dir().map(|d| d.join("CLAUDE.md"))
+}
+
+/// Build the guidance markdown, with user title & locale interpolated.
+///
+/// Style cues are borrowed from `claude_analyze::build_prompt` so the resulting
+/// AskUserQuestion calls match the notification summary tone (loyal junior-dev
+/// voice, user-addressed honorific, locale-aware).
+pub fn render_guidance(user_title: &str, locale: &str) -> String {
+    let (title_en, title_zh) = if user_title.is_empty() {
+        ("Boss".to_string(), "老板".to_string())
+    } else {
+        (user_title.to_string(), user_title.to_string())
+    };
+
+    let language_line = match locale {
+        "zh" => "使用中文回答（question 与 option 的 label、description 皆为中文）。",
+        "ja" => "日本語で回答してください（question と option の label、description は日本語）。",
+        "ko" => "한국어로 답변하세요（question과 option의 label, description은 한국어）.",
+        _ => "Write in English (questions, option labels, and descriptions all in English).",
+    };
+
+    format!(
+        "# Fleet Interaction Mode (managed by Claude Fleet — do not edit)\n\
+\n\
+When the `AskUserQuestion` tool is available in this session, every turn that \
+would otherwise hand control back to the user via plain text output MUST be \
+delivered through `AskUserQuestion` instead. Text remains allowed for \
+mid-turn status updates (the one-sentence line before a tool call, progress \
+notes between tool calls), but the final surface a user sees in a turn must \
+be a decision card.\n\
+\n\
+This is how the user (addressed as \"{title_zh}\" / \"{title_en}\") wants their \
+Fleet app to queue and manage every wait-for-input moment uniformly.\n\
+\n\
+## Scope\n\
+\n\
+- Applies only when `AskUserQuestion` is listed in your available tools. If \
+  the tool is not present (for example: subagent contexts, non-Claude-Code \
+  harnesses), ignore this file entirely and respond normally with text.\n\
+- Applies to the *terminal* output of an assistant turn: the moment you would \
+  stop calling tools and yield control. Do NOT wrap mid-turn narration.\n\
+- Does NOT apply to `ExitPlanMode` — plan approval continues to use that \
+  tool. If the user later enables a decision-panel bridge for plans, this \
+  file will be updated.\n\
+\n\
+## Tone & Language\n\
+\n\
+- Address the user as \"{title_zh}\" (never in third person). Voice: an \
+  enthusiastic, slightly-devoted junior dev reporting to their \
+  \"{title_en}\".\n\
+- {language_line}\n\
+- Keep `header` chip labels to ≤12 characters. Keep option `label` to 1–5 \
+  words; put nuance in `description`.\n\
+\n\
+## Mapping Your Output Into `AskUserQuestion`\n\
+\n\
+The `AskUserQuestion` tool accepts 1–4 questions per call, each with 2–4 \
+options. \"Other\" is automatically provided by the system for free-text \
+input — do NOT add a \"let me type freely\" option yourself.\n\
+\n\
+### Case A — Pure report / status (no pending user decision)\n\
+\n\
+1 question. Use the full report (markdown OK) as the `question` field.\n\
+Options (aim for 2–4 total):\n\
+- 2 guesses at {title_en}'s likely next ask (concrete next actions).\n\
+- 1 \"Wrap up — satisfied\" option, description notes that you'll record \
+  this as a positive pattern in memory.\n\
+- 1 \"Wrap up — dissatisfied\" option, description notes that you'll \
+  capture a lesson so this doesn't recur.\n\
+\n\
+When the user picks either wrap-up option in the follow-up turn, proactively \
+write a matching `feedback`-type or `lesson`-type entry into \
+`~/.claude/projects/.../memory/` per the auto-memory guidance.\n\
+\n\
+### Case B — Report + pending decisions\n\
+\n\
+If you would have reported results AND asked the user to resolve N follow-up \
+issues, pack them into a single `AskUserQuestion` call:\n\
+- Q1: `question` = the report body, then the first decision prompt concatenated. Options = candidate resolutions for that first decision.\n\
+- Q2..Qmin(N+1,4): each remaining decision as its own question with its own options.\n\
+\n\
+If there are more than 3 follow-up decisions, keep the 3 most consequential \
+in this batch and mention the deferred ones at the tail of Q1's report so \
+{title_en} knows more is queued.\n\
+\n\
+### Case C — Single clarifying question\n\
+\n\
+Standard usage — one question, 2–4 candidate answers. The \"Other\" escape \
+hatch is implicit.\n\
+\n\
+## Option Quality Rules\n\
+\n\
+- Each `label` must be a concrete next action or answer, not a meta-choice \
+  like \"Tell me more\".\n\
+- `description` fills in trade-offs, scope, or side-effects so {title_en} \
+  can pick without re-reading the report.\n\
+- If you have a strong recommendation, put it first and append \" (Recommended)\" to its `label`.\n\
+- Never emit an option whose effect is \"just continue with text\" — \"Other\" \
+  already covers that.\n\
+\n\
+## Termination / Loop Safety\n\
+\n\
+After the user answers, if the answer clearly dispatches you to execute \
+(e.g., they picked a concrete action), carry out that action in the same \
+turn. Do NOT re-wrap that executing turn in another `AskUserQuestion` unless \
+you again reach a genuine wait-for-input surface.\n\
+\n\
+## When The Tool Is Absent\n\
+\n\
+If `AskUserQuestion` is not in your toolset this turn, this file is inert — \
+respond with plain text exactly as you would without this guidance.\n\
+",
+        title_en = title_en,
+        title_zh = title_zh,
+        language_line = language_line,
+    )
+}
+
+/// Apply interaction mode: write the guidance file and inject the `@import`
+/// sentinel block into `~/.claude/CLAUDE.md`. Idempotent.
+pub fn apply_interaction_mode(user_title: &str, locale: &str) -> Result<(), String> {
+    let dir = claude_dir().ok_or("cannot determine home dir")?;
+    fs::create_dir_all(&dir).map_err(|e| format!("create ~/.claude: {e}"))?;
+
+    // Always (re)write the guidance file — config may have changed.
+    let guidance_path = guidance_file_path().ok_or("cannot determine home dir")?;
+    let guidance = render_guidance(user_title, locale);
+    fs::write(&guidance_path, guidance).map_err(|e| format!("write guidance file: {e}"))?;
+
+    // Inject sentinel block into CLAUDE.md (idempotent).
+    let claude_md = claude_md_path().ok_or("cannot determine home dir")?;
+    let existing = fs::read_to_string(&claude_md).unwrap_or_default();
+    let stripped = strip_sentinel_block(&existing);
+    let block = format!(
+        "{begin}\n@{path}\n{end}\n",
+        begin = BEGIN_MARKER,
+        end = END_MARKER,
+        path = guidance_path.display(),
+    );
+    let new_content = if stripped.is_empty() {
+        block
+    } else if stripped.ends_with('\n') {
+        format!("{stripped}\n{block}")
+    } else {
+        format!("{stripped}\n\n{block}")
+    };
+    fs::write(&claude_md, new_content).map_err(|e| format!("write CLAUDE.md: {e}"))?;
+    Ok(())
+}
+
+/// Remove interaction mode: strip the sentinel block and delete the guidance
+/// file. Idempotent (no-op if already clean).
+pub fn remove_interaction_mode() -> Result<(), String> {
+    if let Some(claude_md) = claude_md_path() {
+        if let Ok(existing) = fs::read_to_string(&claude_md) {
+            let stripped = strip_sentinel_block(&existing);
+            if stripped != existing {
+                fs::write(&claude_md, stripped).map_err(|e| format!("write CLAUDE.md: {e}"))?;
+            }
+        }
+    }
+    if let Some(path) = guidance_file_path() {
+        if path.exists() {
+            fs::remove_file(&path).map_err(|e| format!("remove guidance file: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether the sentinel block is present in `~/.claude/CLAUDE.md`.
+pub fn is_interaction_mode_installed() -> bool {
+    let Some(claude_md) = claude_md_path() else {
+        return false;
+    };
+    let Ok(content) = fs::read_to_string(&claude_md) else {
+        return false;
+    };
+    content.contains(BEGIN_MARKER) && content.contains(END_MARKER)
+}
+
+fn strip_sentinel_block(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut in_block = false;
+    for line in content.split_inclusive('\n') {
+        let trimmed = line.trim_end_matches(['\n', '\r']);
+        if trimmed == BEGIN_MARKER {
+            in_block = true;
+            continue;
+        }
+        if trimmed == END_MARKER {
+            in_block = false;
+            continue;
+        }
+        if !in_block {
+            out.push_str(line);
+        }
+    }
+    // Collapse 3+ trailing blank lines produced by block removal.
+    while out.ends_with("\n\n\n") {
+        out.pop();
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_removes_block_preserves_rest() {
+        let input = format!(
+            "user content above\n\n{BEGIN_MARKER}\n@~/.claude/fleet-interaction-mode.md\n{END_MARKER}\n\nuser content below\n",
+        );
+        let out = strip_sentinel_block(&input);
+        assert!(!out.contains(BEGIN_MARKER));
+        assert!(!out.contains(END_MARKER));
+        assert!(out.contains("user content above"));
+        assert!(out.contains("user content below"));
+    }
+
+    #[test]
+    fn strip_noop_when_absent() {
+        let input = "plain content\nno markers here\n";
+        assert_eq!(strip_sentinel_block(input), input);
+    }
+
+    #[test]
+    fn render_uses_title_and_locale() {
+        let g = render_guidance("师父", "zh");
+        assert!(g.contains("师父"));
+        assert!(g.contains("使用中文回答"));
+        let g2 = render_guidance("", "en");
+        assert!(g2.contains("Boss"));
+        assert!(g2.contains("老板"));
+    }
+}

@@ -395,6 +395,14 @@ impl LocalBackend {
             });
         }
 
+        // Consumer heartbeat — tells `fleet guard`/`fleet elicitation` that a
+        // head is alive and will consume requests.  Without this they fall
+        // through (allow / native UI) instead of blocking Claude for 120s.
+        std::thread::spawn(|| loop {
+            claw_fleet_core::consumer_heartbeat::write_heartbeat();
+            std::thread::sleep(Duration::from_secs(2));
+        });
+
         // Guard directory watcher — polls for new guard requests from `fleet guard`.
         {
             let app_guard = app.clone();
@@ -1063,6 +1071,14 @@ impl Backend for LocalBackend {
 
     fn remove_elicitation_hook(&self) -> Result<(), String> {
         crate::hooks::remove_elicitation_hook()
+    }
+
+    fn apply_interaction_mode(&self, user_title: &str, locale: &str) -> Result<(), String> {
+        crate::interaction_mode::apply_interaction_mode(user_title, locale)
+    }
+
+    fn remove_interaction_mode(&self) -> Result<(), String> {
+        crate::interaction_mode::remove_interaction_mode()
     }
 
     fn respond_to_elicitation(

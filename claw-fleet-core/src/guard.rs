@@ -94,6 +94,16 @@ pub fn poll_response(id: &str, timeout: Duration) -> Option<GuardResponse> {
     }
 }
 
+/// Non-blocking read of a guard response, if one exists yet.
+pub fn try_read_response(id: &str) -> Option<GuardResponse> {
+    let path = response_path(id)?;
+    if !path.exists() {
+        return None;
+    }
+    let content = fs::read_to_string(&path).ok()?;
+    serde_json::from_str::<GuardResponse>(&content).ok()
+}
+
 /// Write a guard response.  Called by the desktop app.
 pub fn write_response(resp: &GuardResponse) -> Result<(), String> {
     let path = response_path(&resp.id).ok_or("cannot determine home dir")?;
