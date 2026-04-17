@@ -156,9 +156,17 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           console.error("auto-apply elicitation hook:", e),
         );
       }
-      // Interaction mode: always re-apply on startup if enabled, to pick up
-      // any title/locale changes made while Fleet was closed.
-      if (getItem("interaction-mode-enabled") === "true") {
+      // Sync the toggle to actual disk state — localStorage gets wiped on
+      // reinstall/cache-clear, but the sentinel block in ~/.claude/CLAUDE.md
+      // is the source of truth.
+      setInteractionModeEnabled(plan.interactionModeInstalled);
+      setItem(
+        "interaction-mode-enabled",
+        plan.interactionModeInstalled ? "true" : "false",
+      );
+      // Re-apply on startup if installed, to pick up any title/locale changes
+      // made while Fleet was closed.
+      if (plan.interactionModeInstalled) {
         invoke("apply_interaction_mode").catch((e: unknown) =>
           console.error("auto-apply interaction mode:", e),
         );

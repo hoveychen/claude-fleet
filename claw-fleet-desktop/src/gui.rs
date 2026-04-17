@@ -1345,21 +1345,21 @@ fn show_main_window(app: tauri::AppHandle) {
     }
 }
 
-// Lite portrait mode — shrink main window to phone-like portrait strip and
-// drop decorations so it can sit at the screen edge. Disabling restores the
-// normal desktop layout. Dimensions are intentionally fixed to keep the CSS
-// simple; the user can still drag the window anywhere via the custom drag
-// region in LiteApp.
+// Lite portrait mode — shrink main window to phone-like portrait strip.
+// We intentionally keep the native decorations (titleBarStyle: Overlay on
+// macOS, default chrome elsewhere) because toggling set_decorations at
+// runtime drops the Overlay style and the title bar can't be restored —
+// that manifested as a broken title bar after exiting lite. Trade-off:
+// traffic lights stay visible in lite mode, but we gain native rounded
+// corners + correct restore.
 #[tauri::command]
 fn set_lite_mode(app: tauri::AppHandle, enabled: bool) {
     let Some(w) = app.get_webview_window("main") else { return };
     if enabled {
-        let _ = w.set_decorations(false);
         let _ = w.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
             300.0, 520.0,
         ))));
         let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(340.0, 720.0)));
-        // Park it near the top-right of the current monitor so Boss can reach it.
         if let Ok(Some(monitor)) = w.current_monitor() {
             let size = monitor.size();
             let scale = monitor.scale_factor();
@@ -1369,7 +1369,6 @@ fn set_lite_mode(app: tauri::AppHandle, enabled: bool) {
             let _ = w.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
         }
     } else {
-        let _ = w.set_decorations(true);
         let _ = w.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
             900.0, 600.0,
         ))));

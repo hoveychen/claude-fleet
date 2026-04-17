@@ -9,6 +9,14 @@
   pointer-events: none;
 }
 
+.overlay_lite {
+  left: 10px;
+  right: 10px;
+  bottom: 12px;
+  width: auto;
+  max-width: none;
+}
+
 /* ── Z-axis stack container ────────────────────────────────────────────────── */
 .stack {
   position: relative;

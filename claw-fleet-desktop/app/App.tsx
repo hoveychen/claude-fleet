@@ -12,6 +12,7 @@ import { WaitingAlerts } from "./components/WaitingAlerts";
 import { DecisionPanel } from "./components/DecisionPanel";
 import { UpdateNotice } from "./components/UpdateNotice";
 import { Wizard } from "./components/Wizard";
+import { useDecisionEvents } from "./hooks/useDecisionEvents";
 import { type Connection, resolveTheme, useConnectionStore, useDetailStore, useOverlayStore, useSessionsStore, useUIStore } from "./store";
 import { getItem, setItem, getSeenFeatures, ONBOARDING_FEATURES, type OnboardingFeatureId } from "./storage";
 import type { OnboardingMode } from "./components/Onboarding";
@@ -29,6 +30,11 @@ function computeUnseenFeatures(): OnboardingFeatureId[] {
 function App() {
   const { theme, liteMode } = useUIStore();
   const { connection, setConnection, disconnect } = useConnectionStore();
+
+  // Always-mounted listeners for backend decision events. Must live at the
+  // App root so events aren't dropped while DecisionPanel is unmounted
+  // (e.g. lite mode with no pending decisions).
+  useDecisionEvents();
 
   const [isMacOS, setIsMacOS] = useState(false);
   const [onboardingMode, setOnboardingMode] = useState<OnboardingMode | null>(() => {

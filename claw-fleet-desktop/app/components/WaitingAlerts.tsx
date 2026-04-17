@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import type { WaitingAlert } from "../types";
-import { useDetailStore, useSessionsStore, useUIStore, useWaitingAlertsStore } from "../store";
+import { useDecisionStore, useDetailStore, useSessionsStore, useUIStore, useWaitingAlertsStore } from "../store";
 import { getItem } from "../storage";
 import { playAlertSound, type TtsMode } from "../audio";
 import styles from "./WaitingAlerts.module.css";
@@ -75,6 +75,7 @@ function AlertCard({
 
 export function WaitingAlerts() {
   const { alerts, setAlerts, refresh, dismiss, dismissedIds } = useWaitingAlertsStore();
+  const liteMode = useUIStore((s) => s.liteMode);
   const spokenIds = useRef(new Set<string>());
 
   useEffect(() => {
@@ -84,17 +85,29 @@ export function WaitingAlerts() {
 
       // Chime / TTS for new alerts.
       //
-      // Claude Code sessions route their wait-for-input through the
+      // Claude Code sessions MAY route their wait-for-input through the
       // AskUserQuestion → DecisionPanel bridge, which owns the audio cue
-      // there.  Skip alerts whose source is "claude-code" to avoid playing
-      // the same chime twice for one event.  Other sources (cursor, codex,
-      // …) still announce here because they don't flow through the panel.
+      // there.  When that bridge fires we must not double-announce. But
+      // plain waitingInput (no AskUserQuestion) for claude-code still
+      // needs a sound — otherwise Boss gets silently-pending sessions.
+      // Strategy: defer the claude-code chime slightly; if a matching
+      // decision arrives within the delay, cancel (DecisionPanel will
+      // cover it); otherwise play.
       const ttsMode = (getItem("tts-mode") as TtsMode) || "off";
       if (ttsMode === "off") return;
       for (const alert of e.payload) {
-        if (alert.source === "claude-code") continue;
-        if (!spokenIds.current.has(alert.sessionId)) {
-          spokenIds.current.add(alert.sessionId);
+        if (spokenIds.current.has(alert.sessionId)) continue;
+        spokenIds.current.add(alert.sessionId);
+        if (alert.source === "claude-code") {
+          const { sessionId, summary } = alert;
+          setTimeout(() => {
+            const decisions = useDecisionStore.getState().decisions;
+            const handledByPanel = decisions.some(
+              (d) => d.request?.sessionId === sessionId,
+            );
+            if (!handledByPanel) playAlertSound(summary);
+          }, 800);
+        } else {
           playAlertSound(alert.summary);
         }
       }
@@ -114,7 +127,7 @@ export function WaitingAlerts() {
   const overflowCount = visible.length - MAX_STACK;
 
   return (
-    <div className={styles.overlay}>
+    <div className={`${styles.overlay} ${liteMode ? styles.overlay_lite : ""}`}>
       <div className={styles.stack}>
         {shown.map((alert, i) => (
           <div

@@ -1,16 +1,12 @@
-import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useDecisionStore } from "../store";
-import { playDecisionAlert } from "../audio";
 import { safeMarkdownComponents } from "../markdown/safeLinks";
 import type {
   ElicitationDecision,
-  ElicitationRequest,
   GuardDecision,
-  GuardRequest,
   PendingDecision,
 } from "../types";
 import styles from "./DecisionPanel.module.css";
@@ -372,51 +368,7 @@ export function DecisionPanel({ compact = false }: { compact?: boolean } = {}) {
     decisions,
     activeDecisionId,
     setActiveDecision,
-    addGuardRequest,
-    addElicitationRequest,
   } = useDecisionStore();
-
-  // Track which decisions we've already announced so re-emitted payloads
-  // (e.g. after remount / reconnect) don't double-chime.
-  const announcedIds = useRef<Set<string>>(new Set());
-
-  // Listen for guard-request events from the Rust backend.
-  useEffect(() => {
-    const unlisten = listen<GuardRequest>("guard-request", (e) => {
-      const r = e.payload;
-      if (!announcedIds.current.has(r.id)) {
-        announcedIds.current.add(r.id);
-        const spoken = [r.workspaceName, r.aiTitle, r.toolName || r.commandSummary]
-          .filter((s): s is string => !!s && s.length > 0)
-          .join(" ");
-        playDecisionAlert("guard", spoken);
-      }
-      addGuardRequest(r);
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [addGuardRequest]);
-
-  // Listen for elicitation-request events from the Rust backend.
-  useEffect(() => {
-    const unlisten = listen<ElicitationRequest>("elicitation-request", (e) => {
-      const r = e.payload;
-      if (!announcedIds.current.has(r.id)) {
-        announcedIds.current.add(r.id);
-        const header = r.questions[0]?.header?.trim() ?? "";
-        const fallback = r.questions[0]?.question ?? "";
-        const spoken = [r.workspaceName, r.aiTitle, header || fallback]
-          .filter((s): s is string => !!s && s.length > 0)
-          .join(" ");
-        playDecisionAlert("elicitation", spoken);
-      }
-      addElicitationRequest(r);
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [addElicitationRequest]);
 
   // Escape key: block the active guard decision.
   const { respond } = useDecisionStore();

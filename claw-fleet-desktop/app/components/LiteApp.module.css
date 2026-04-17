@@ -21,6 +21,12 @@
   flex-shrink: 0;
 }
 
+/* Leave room for macOS traffic lights (titleBarStyle: Overlay renders them
+   floating over the top-left ~72px × 28px area). */
+[data-platform="macos"] .drag_bar {
+  padding-left: 76px;
+}
+
 .drag_title {
   flex: 1;
   font-size: 12px;
