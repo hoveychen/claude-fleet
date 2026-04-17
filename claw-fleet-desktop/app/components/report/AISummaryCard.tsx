@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { safeMarkdownComponents } from "../../markdown/safeLinks";
 import { useReportStore } from "../../store";
 import type { DailyMetrics } from "../../types";
 import styles from "./ReportView.module.css";
@@ -63,7 +64,7 @@ export function AISummaryCard({
           {/* Hero area */}
           <div className={styles.summary_hero}>
             <div className={styles.summary_hero_text}>
-              {heroLine && <ReactMarkdown remarkPlugins={[remarkGfm]}>{heroLine}</ReactMarkdown>}
+              {heroLine && <ReactMarkdown remarkPlugins={[remarkGfm]} components={safeMarkdownComponents}>{heroLine}</ReactMarkdown>}
             </div>
             <div className={styles.summary_hero_stats}>
               <div className={styles.hero_stat}>
@@ -85,7 +86,7 @@ export function AISummaryCard({
           {/* Body */}
           {bodyMarkdown && (
             <div className={styles.summary_content}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{bodyMarkdown}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={safeMarkdownComponents}>{bodyMarkdown}</ReactMarkdown>
             </div>
           )}
         </div>

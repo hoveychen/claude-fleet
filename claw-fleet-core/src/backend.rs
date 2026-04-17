@@ -64,6 +64,10 @@ pub struct WaitingAlert {
     pub summary: String,
     pub detected_at_ms: u64,
     pub jsonl_path: String,
+    /// Originating agent source id (e.g. "claude-code", "cursor", "codex").
+    /// Used by the UI to suppress audible alerts for sources whose waits are
+    /// already surfaced through the Decision Panel (AskUserQuestion bridge).
+    pub source: String,
 }
 
 // ── Unified usage summary for tray / overview ───────────────────────────────

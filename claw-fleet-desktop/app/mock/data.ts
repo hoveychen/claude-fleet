@@ -686,6 +686,7 @@ export const MOCK_WAITING_ALERTS: WaitingAlert[] = [
     summary: "Should I proceed with breaking changes to the Button component API?",
     detectedAtMs: NOW - 3 * MIN,
     jsonlPath: "/Users/demo/.claude/projects/web-frontend/sess-web-waiting.jsonl",
+    source: "claude-code",
   },
   {
     sessionId: "sess-api-main",
@@ -693,6 +694,7 @@ export const MOCK_WAITING_ALERTS: WaitingAlert[] = [
     summary: "Found 3 failing tests after migration. Should I fix them or skip for now?",
     detectedAtMs: NOW - 1 * MIN,
     jsonlPath: "/Users/demo/.claude/projects/api-server/sess-api-main.jsonl",
+    source: "claude-code",
   },
   {
     sessionId: "sess-docs-idle",
@@ -700,6 +702,7 @@ export const MOCK_WAITING_ALERTS: WaitingAlert[] = [
     summary: "The API spec at /v2/users has breaking changes. Update docs to match?",
     detectedAtMs: NOW - 5 * MIN,
     jsonlPath: "/Users/demo/.claude/projects/docs-site/sess-docs-idle.jsonl",
+    source: "cursor",
   },
 ];
 

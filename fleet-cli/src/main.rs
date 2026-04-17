@@ -1330,6 +1330,7 @@ fn cmd_serve(port: u16, token: String) {
                                 .unwrap_or_default()
                                 .as_millis() as u64,
                             jsonl_path: sess.jsonl_path.clone(),
+                            source: sess.agent_source.clone(),
                         };
                         if let Ok(json) = serde_json::to_string(&alert) {
                             sse_bg.broadcast("waiting-alert", &json);
@@ -1343,7 +1344,15 @@ fn cmd_serve(port: u16, token: String) {
                     guard::list_pending_requests().into_iter().collect();
                 for id in &guard_ids {
                     if prev_guard_ids.insert(id.clone()) {
-                        if let Some(req) = guard::read_request(id) {
+                        if let Some(mut req) = guard::read_request(id) {
+                            if req.workspace_name.is_empty() {
+                                if let Some(s) = sessions.iter().find(|s| s.id == req.session_id) {
+                                    req.workspace_name = s
+                                        .ai_title
+                                        .clone()
+                                        .unwrap_or_else(|| s.workspace_name.clone());
+                                }
+                            }
                             if let Ok(json) = serde_json::to_string(&req) {
                                 sse_bg.broadcast("guard-request", &json);
                             }
@@ -1357,7 +1366,15 @@ fn cmd_serve(port: u16, token: String) {
                     elicitation::list_pending_requests().into_iter().collect();
                 for id in &elicit_ids {
                     if prev_elicit_ids.insert(id.clone()) {
-                        if let Some(req) = elicitation::read_request(id) {
+                        if let Some(mut req) = elicitation::read_request(id) {
+                            if req.workspace_name.is_empty() {
+                                if let Some(s) = sessions.iter().find(|s| s.id == req.session_id) {
+                                    req.workspace_name = s
+                                        .ai_title
+                                        .clone()
+                                        .unwrap_or_else(|| s.workspace_name.clone());
+                                }
+                            }
                             if let Ok(json) = serde_json::to_string(&req) {
                                 sse_bg.broadcast("elicitation-request", &json);
                             }

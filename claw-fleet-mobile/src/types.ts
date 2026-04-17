@@ -46,6 +46,7 @@ export interface WaitingAlert {
   summary: string;
   detectedAtMs: number;
   jsonlPath: string;
+  source: string;
 }
 
 export type ContentBlockType =

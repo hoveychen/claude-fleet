@@ -58,6 +58,53 @@ mid-turn status updates (the one-sentence line before a tool call, progress \
 notes between tool calls), but the final surface a user sees in a turn must \
 be a decision card.\n\
 \n\
+**\"Available\" includes deferred.** If `AskUserQuestion` appears in the \
+session's deferred-tool list (its name is listed but its schema is not \
+preloaded), it still counts as available. The full schema is embedded below \
+so you can call it directly without a `ToolSearch` round-trip. Do NOT fall \
+through to plain text just because the tool was listed as deferred — that is \
+the exact failure mode this mode is designed to prevent.\n\
+\n\
+### `AskUserQuestion` schema (use this to construct the call directly)\n\
+\n\
+Top-level: `{{ \"questions\": Question[] }}` — 1 to 4 questions per call.\n\
+\n\
+`Question` (all fields required unless noted):\n\
+- `question` (string): the full prompt body; markdown allowed; end with `?` \
+  for clarifying questions or with the report body for Case A.\n\
+- `header` (string, ≤12 chars): short chip label shown in the UI.\n\
+- `multiSelect` (boolean): `false` for single-choice, `true` when options are \
+  not mutually exclusive.\n\
+- `options` (Option[], length 2–4): candidate answers. Do NOT add an \"Other\" \
+  option — the UI appends one automatically.\n\
+\n\
+`Option`:\n\
+- `label` (string, required, 1–5 words): concrete action/answer. Append \
+  \" (Recommended)\" to the first option when you have a clear recommendation.\n\
+- `description` (string, required): trade-offs, scope, side-effects.\n\
+- `preview` (string, optional): markdown rendered in a side-by-side panel \
+  when this option is focused. Single-select only; skip unless comparing \
+  concrete artifacts (UI mockups, code snippets, diagrams).\n\
+\n\
+Minimal example:\n\
+```json\n\
+{{\n\
+  \"questions\": [{{\n\
+    \"question\": \"Which approach should I take?\",\n\
+    \"header\": \"Approach\",\n\
+    \"multiSelect\": false,\n\
+    \"options\": [\n\
+      {{\"label\": \"Option A (Recommended)\", \"description\": \"Fast but couples modules.\"}},\n\
+      {{\"label\": \"Option B\", \"description\": \"Slower, keeps boundaries clean.\"}}\n\
+    ]\n\
+  }}]\n\
+}}\n\
+```\n\
+\n\
+If `ToolSearch` is available and you prefer to load the live schema as a \
+belt-and-braces check, the query is `select:AskUserQuestion`. But the \
+embedded schema above is authoritative for the shape — use it.\n\
+\n\
 This is how the user (addressed as \"{title_zh}\" / \"{title_en}\") wants their \
 Fleet app to queue and manage every wait-for-input moment uniformly.\n\
 \n\
@@ -136,8 +183,10 @@ you again reach a genuine wait-for-input surface.\n\
 \n\
 ## When The Tool Is Absent\n\
 \n\
-If `AskUserQuestion` is not in your toolset this turn, this file is inert — \
-respond with plain text exactly as you would without this guidance.\n\
+If `AskUserQuestion` is not in your toolset this turn — neither directly \
+listed nor present in the deferred-tool list — this file is inert and you \
+respond with plain text exactly as you would without this guidance. A \
+deferred listing does NOT qualify as absent; see the opening section.\n\
 ",
         title_en = title_en,
         title_zh = title_zh,
@@ -261,5 +310,28 @@ mod tests {
         let g2 = render_guidance("", "en");
         assert!(g2.contains("Boss"));
         assert!(g2.contains("老板"));
+    }
+
+    #[test]
+    fn render_embeds_askuserquestion_schema_for_deferred_case() {
+        let g = render_guidance("Boss", "en");
+        assert!(g.contains("deferred"), "must explain deferred-tool semantics");
+        assert!(
+            g.contains("\"questions\""),
+            "must embed the AskUserQuestion schema so deferred calls don't need ToolSearch"
+        );
+        assert!(
+            g.contains("multiSelect"),
+            "schema must cover the multiSelect field"
+        );
+        assert!(
+            g.contains("2–4") || g.contains("2-4"),
+            "schema must state the 2-4 options constraint"
+        );
+        assert!(
+            g.contains("deferred listing does NOT qualify as absent")
+                || g.contains("deferred-tool list"),
+            "absent-section must disambiguate deferred vs absent"
+        );
     }
 }

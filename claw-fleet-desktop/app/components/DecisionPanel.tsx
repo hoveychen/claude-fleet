@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useDecisionStore } from "../store";
+import { useDecisionStore, useDetailStore, useSessionsStore, useUIStore } from "../store";
+import { playDecisionAlert } from "../audio";
+import { safeMarkdownComponents } from "../markdown/safeLinks";
 import type {
   ElicitationDecision,
   ElicitationRequest,
@@ -12,6 +14,18 @@ import type {
   PendingDecision,
 } from "../types";
 import styles from "./DecisionPanel.module.css";
+
+function shortId(id: string): string {
+  return id.length > 8 ? id.slice(0, 8) : id;
+}
+
+function navigateToSessionById(sessionId: string) {
+  const session = useSessionsStore.getState().sessions.find((s) => s.id === sessionId);
+  if (session) {
+    useUIStore.getState().setViewMode("list");
+    useDetailStore.getState().open(session);
+  }
+}
 
 // ── Guard card renderer ────────────────────────────────────────────────────
 
@@ -45,6 +59,16 @@ function GuardCard({ decision }: { decision: GuardDecision }) {
         {req.workspaceName && (
           <span className={styles.card_workspace}>{req.workspaceName}</span>
         )}
+        {req.sessionId && (
+          <button
+            type="button"
+            className={styles.card_session}
+            onClick={() => navigateToSessionById(req.sessionId)}
+            title={t("decision.open_session", "Open session")}
+          >
+            {shortId(req.sessionId)}
+          </button>
+        )}
       </div>
 
       <div className={styles.command}>{req.command}</div>
@@ -61,7 +85,7 @@ function GuardCard({ decision }: { decision: GuardDecision }) {
         <div className={`${styles.analysis} ${decision.analyzing ? styles.analysis_loading : ""}`}>
           {decision.analyzing
             ? t("guard.analyzing", "Analyzing command...")
-            : <ReactMarkdown remarkPlugins={[remarkGfm]}>{decision.analysis ?? ""}</ReactMarkdown>}
+            : <ReactMarkdown remarkPlugins={[remarkGfm]} components={safeMarkdownComponents}>{decision.analysis ?? ""}</ReactMarkdown>}
         </div>
       )}
 
@@ -149,6 +173,16 @@ function ElicitationCard({ decision }: { decision: ElicitationDecision }) {
         {request.workspaceName && (
           <span className={styles.card_workspace}>{request.workspaceName}</span>
         )}
+        {request.sessionId && (
+          <button
+            type="button"
+            className={styles.card_session}
+            onClick={() => navigateToSessionById(request.sessionId)}
+            title={t("decision.open_session", "Open session")}
+          >
+            {shortId(request.sessionId)}
+          </button>
+        )}
       </div>
 
       {total > 1 && (
@@ -173,7 +207,7 @@ function ElicitationCard({ decision }: { decision: ElicitationDecision }) {
           {q.header && (
             <span className={styles.elicitation_header}>{q.header}</span>
           )}
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{q.question}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={safeMarkdownComponents}>{q.question}</ReactMarkdown>
         </div>
         <OptionsBlock
           decisionId={decision.id}
@@ -307,7 +341,7 @@ function OptionsBlock({
       {list}
       <div className={styles.elicitation_preview}>
         {focusedPreview ? (
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{focusedPreview}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={safeMarkdownComponents}>{focusedPreview}</ReactMarkdown>
         ) : null}
       </div>
     </div>
@@ -350,10 +384,22 @@ export function DecisionPanel() {
     addElicitationRequest,
   } = useDecisionStore();
 
+  // Track which decisions we've already announced so re-emitted payloads
+  // (e.g. after remount / reconnect) don't double-chime.
+  const announcedIds = useRef<Set<string>>(new Set());
+
   // Listen for guard-request events from the Rust backend.
   useEffect(() => {
     const unlisten = listen<GuardRequest>("guard-request", (e) => {
-      addGuardRequest(e.payload);
+      const r = e.payload;
+      if (!announcedIds.current.has(r.id)) {
+        announcedIds.current.add(r.id);
+        const spoken = [r.workspaceName, r.toolName || r.commandSummary]
+          .filter(Boolean)
+          .join(" ");
+        playDecisionAlert("guard", spoken);
+      }
+      addGuardRequest(r);
     });
     return () => {
       unlisten.then((fn) => fn());
@@ -363,7 +409,17 @@ export function DecisionPanel() {
   // Listen for elicitation-request events from the Rust backend.
   useEffect(() => {
     const unlisten = listen<ElicitationRequest>("elicitation-request", (e) => {
-      addElicitationRequest(e.payload);
+      const r = e.payload;
+      if (!announcedIds.current.has(r.id)) {
+        announcedIds.current.add(r.id);
+        const header = r.questions[0]?.header?.trim() ?? "";
+        const fallback = r.questions[0]?.question ?? "";
+        const spoken = [r.workspaceName, header || fallback]
+          .filter((s) => s && s.length > 0)
+          .join(" ");
+        playDecisionAlert("elicitation", spoken);
+      }
+      addElicitationRequest(r);
     });
     return () => {
       unlisten.then((fn) => fn());
@@ -423,6 +479,9 @@ export function DecisionPanel() {
             <span className={styles.tab_label}>{tabLabel(d)}</span>
             {d.request.workspaceName && (
               <span className={styles.tab_workspace}>{d.request.workspaceName}</span>
+            )}
+            {d.request.sessionId && (
+              <span className={styles.tab_session}>{shortId(d.request.sessionId)}</span>
             )}
           </button>
         ))}

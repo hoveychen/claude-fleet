@@ -406,6 +406,7 @@ impl LocalBackend {
         // Guard directory watcher — polls for new guard requests from `fleet guard`.
         {
             let app_guard = app.clone();
+            let sess_guard = sessions.clone();
             std::thread::spawn(move || {
                 let mut known: HashSet<String> = HashSet::new();
                 loop {
@@ -414,7 +415,11 @@ impl LocalBackend {
                     for id in &pending {
                         if known.insert(id.clone()) {
                             // New request — read it and emit a Tauri event.
-                            if let Some(req) = crate::guard::read_request(id) {
+                            if let Some(mut req) = crate::guard::read_request(id) {
+                                if req.workspace_name.is_empty() {
+                                    req.workspace_name =
+                                        resolve_workspace_display(&sess_guard, &req.session_id);
+                                }
                                 crate::log_debug(&format!(
                                     "[guard] new request: {} cmd={}",
                                     id, req.command_summary
@@ -433,6 +438,7 @@ impl LocalBackend {
         // Elicitation directory watcher — polls for new elicitation requests from `fleet elicitation`.
         {
             let app_elicit = app.clone();
+            let sess_elicit = sessions.clone();
             std::thread::spawn(move || {
                 let mut known: HashSet<String> = HashSet::new();
                 loop {
@@ -440,7 +446,11 @@ impl LocalBackend {
                     let pending = crate::elicitation::list_pending_requests();
                     for id in &pending {
                         if known.insert(id.clone()) {
-                            if let Some(req) = crate::elicitation::read_request(id) {
+                            if let Some(mut req) = crate::elicitation::read_request(id) {
+                                if req.workspace_name.is_empty() {
+                                    req.workspace_name =
+                                        resolve_workspace_display(&sess_elicit, &req.session_id);
+                                }
                                 crate::log_debug(&format!(
                                     "[elicitation] new request: {} questions={}",
                                     id,
@@ -518,6 +528,23 @@ fn indexer_thread(
             }
         }
     }
+}
+
+/// Resolve a display name (AI title preferred, falling back to workspace name)
+/// for a given session id. Returns an empty string if the session is unknown.
+fn resolve_workspace_display(
+    sessions: &Arc<Mutex<Vec<SessionInfo>>>,
+    session_id: &str,
+) -> String {
+    let list = sessions.lock().unwrap();
+    list.iter()
+        .find(|s| s.id == session_id)
+        .map(|s| {
+            s.ai_title
+                .clone()
+                .unwrap_or_else(|| s.workspace_name.clone())
+        })
+        .unwrap_or_default()
 }
 
 /// Rescan all sources and emit updated sessions (with outcome tags injected).
@@ -1477,6 +1504,7 @@ fn detect_waiting_transitions(
             let display_name = sess.ai_title.clone().unwrap_or_else(|| sess.workspace_name.clone());
             let jsonl_path = sess.jsonl_path.clone();
             let last_text = sess.last_message_preview.clone().unwrap_or_default();
+            let agent_source = sess.agent_source.clone();
             let wa = waiting_alerts.clone();
             let so = session_outcomes.clone();
             let an = analyzing.clone();
@@ -1524,6 +1552,7 @@ fn detect_waiting_transitions(
                             .unwrap_or_default()
                             .as_millis() as u64,
                         jsonl_path: jsonl_path.clone(),
+                        source: agent_source.clone(),
                     };
                     wa.lock().unwrap().insert(session_id, alert);
                     let alerts: Vec<WaitingAlert> =
@@ -1534,7 +1563,13 @@ fn detect_waiting_transitions(
                     }
 
                     // Play TTS from backend (blocks until done).
-                    crate::play_tts_for_notification(&app_bg, &summary);
+                    // Claude Code sessions route their wait-for-input through
+                    // the AskUserQuestion → DecisionPanel bridge, which owns
+                    // audio playback there. Suppress the waitalert TTS for
+                    // those to avoid double-announcements.
+                    if agent_source != "claude-code" {
+                        crate::play_tts_for_notification(&app_bg, &summary);
+                    }
                 }
             });
         } else if !is_waiting && was_waiting {

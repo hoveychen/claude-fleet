@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { safeLinkComponent } from "../../markdown/safeLinks";
 import styles from "./TextBlock.module.css";
 
 /** Recursively walk React children and highlight matching terms in string nodes. */
@@ -101,20 +101,9 @@ export const TextBlock = memo(function TextBlock({ text, isPartial, searchTerms 
               </code>
             );
           },
-          // Open links externally (Tauri handles this via opener plugin)
-          a({ href, children }) {
-            return (
-              <a
-                href={href}
-                onClick={(e) => {
-                  e.preventDefault();
-                  if (href) openUrl(href);
-                }}
-              >
-                {children}
-              </a>
-            );
-          },
+          // External URLs open in the system browser; relative paths are inert
+          // so the Tauri webview never navigates (see markdown/safeLinks.ts).
+          a: safeLinkComponent(),
         }}
       >
         {content}

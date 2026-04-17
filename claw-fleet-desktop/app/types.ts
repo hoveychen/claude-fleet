@@ -87,6 +87,8 @@ export interface WaitingAlert {
   summary: string;
   detectedAtMs: number;
   jsonlPath: string;
+  /** Originating agent source — e.g. "claude-code", "cursor", "codex". */
+  source: string;
 }
 
 export interface SkillInvocation {

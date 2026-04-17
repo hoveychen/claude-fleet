@@ -49,6 +49,7 @@ export class MockApiClient {
       summary: s.lastMessagePreview || "Waiting for input",
       detectedAtMs: Date.now() - 60000,
       jsonlPath: s.jsonlPath,
+      source: s.agentSource,
     }));
   }
 

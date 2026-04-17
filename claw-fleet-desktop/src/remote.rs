@@ -1212,6 +1212,7 @@ fn connect_remote_start_probe(
                         let display_name = sess.ai_title.clone()
                             .unwrap_or_else(|| sess.workspace_name.clone());
                         let last_text = sess.last_message_preview.clone().unwrap_or_default();
+                        let agent_source = sess.agent_source.clone();
                         let wa = wa2.clone();
                         let so = so2.clone();
                         let an = analyzing.clone();
@@ -1260,6 +1261,7 @@ fn connect_remote_start_probe(
                                         .unwrap_or_default()
                                         .as_millis() as u64,
                                     jsonl_path,
+                                    source: agent_source.clone(),
                                 };
                                 wa.lock().unwrap().insert(session_id, alert);
                                 let alerts: Vec<crate::backend::WaitingAlert> =
@@ -1271,8 +1273,12 @@ fn connect_remote_start_probe(
                                     );
                                 }
 
-                                // Play TTS from backend (blocks until done).
-                                crate::play_tts_for_notification(&app_bg, &summary);
+                                // Suppress waitalert TTS for Claude Code — its
+                                // waits are already spoken by the DecisionPanel
+                                // (AskUserQuestion bridge) to avoid double play.
+                                if agent_source != "claude-code" {
+                                    crate::play_tts_for_notification(&app_bg, &summary);
+                                }
                             }
                         });
                     } else if !is_waiting && was_waiting {

@@ -82,10 +82,17 @@ export function WaitingAlerts() {
     const unlistenPromise = listen<WaitingAlert[]>("waiting-alerts-updated", (e) => {
       setAlerts(e.payload);
 
-      // Chime / TTS for new alerts
+      // Chime / TTS for new alerts.
+      //
+      // Claude Code sessions route their wait-for-input through the
+      // AskUserQuestion → DecisionPanel bridge, which owns the audio cue
+      // there.  Skip alerts whose source is "claude-code" to avoid playing
+      // the same chime twice for one event.  Other sources (cursor, codex,
+      // …) still announce here because they don't flow through the panel.
       const ttsMode = (getItem("tts-mode") as TtsMode) || "off";
       if (ttsMode === "off") return;
       for (const alert of e.payload) {
+        if (alert.source === "claude-code") continue;
         if (!spokenIds.current.has(alert.sessionId)) {
           spokenIds.current.add(alert.sessionId);
           playAlertSound(alert.summary);

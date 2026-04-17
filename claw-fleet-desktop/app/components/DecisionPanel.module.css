@@ -157,6 +157,14 @@
   flex-shrink: 0;
 }
 
+.tab_session {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--color-text-dim);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
 /* ── Individual decision card ───────────────────────────────────────────── */
 
 .card {
@@ -194,6 +202,24 @@
   font-size: 11px;
   color: var(--color-text-dim);
   flex-shrink: 0;
+}
+
+.card_session {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--color-text-dim);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.card_session:hover {
+  background: var(--color-bg-tool);
+  color: var(--color-text);
 }
 
 /* Command block */

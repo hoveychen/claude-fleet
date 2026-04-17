@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { safeMarkdownComponents } from "../../markdown/safeLinks";
 import { useReportStore } from "../../store";
 import type { DailyReport, Lesson } from "../../types";
 import styles from "./ReportView.module.css";
@@ -60,7 +61,7 @@ function TimelineEntry({ report, onOpenDaily }: { report: DailyReport; onOpenDai
         <div className={styles.summary_card}>
           <div className={styles.summary_hero}>
             <div className={styles.summary_hero_text}>
-              {heroLine && <ReactMarkdown remarkPlugins={[remarkGfm]}>{heroLine}</ReactMarkdown>}
+              {heroLine && <ReactMarkdown remarkPlugins={[remarkGfm]} components={safeMarkdownComponents}>{heroLine}</ReactMarkdown>}
             </div>
             <div className={styles.summary_hero_stats}>
               <div className={styles.hero_stat}>
@@ -81,7 +82,7 @@ function TimelineEntry({ report, onOpenDaily }: { report: DailyReport; onOpenDai
           </div>
           {bodyMarkdown && (
             <div className={styles.summary_content}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{bodyMarkdown}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={safeMarkdownComponents}>{bodyMarkdown}</ReactMarkdown>
             </div>
           )}
         </div>
@@ -97,8 +98,8 @@ function TimelineEntry({ report, onOpenDaily }: { report: DailyReport; onOpenDai
             {report.lessons.map((lesson, idx) => (
               <div key={idx} className={styles.lesson_card}>
                 <div className={styles.lesson_content}>
-                  <div className={styles.lesson_text}><ReactMarkdown remarkPlugins={[remarkGfm]}>{lesson.content}</ReactMarkdown></div>
-                  <div className={styles.lesson_reason}><ReactMarkdown remarkPlugins={[remarkGfm]}>{lesson.reason}</ReactMarkdown></div>
+                  <div className={styles.lesson_text}><ReactMarkdown remarkPlugins={[remarkGfm]} components={safeMarkdownComponents}>{lesson.content}</ReactMarkdown></div>
+                  <div className={styles.lesson_reason}><ReactMarkdown remarkPlugins={[remarkGfm]} components={safeMarkdownComponents}>{lesson.reason}</ReactMarkdown></div>
                   <div className={styles.lesson_meta}>{lesson.workspaceName}</div>
                 </div>
                 <button

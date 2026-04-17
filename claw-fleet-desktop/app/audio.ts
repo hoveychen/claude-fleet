@@ -195,3 +195,48 @@ async function playAlertSoundImpl(_summary: string) {
   await playChime(chime);
   // TTS is now handled by the Rust backend after sending the notification.
 }
+
+// ── Decision-panel alerts ───────────────────────────────────────────────────
+
+// Decision-panel playback queue — guaranteed serial so rapid-fire decisions
+// don't overlap their chimes or speech.
+type DecisionJob = { preset: ChimePreset; spoken: string; mode: TtsMode };
+const decisionQueue: DecisionJob[] = [];
+let decisionPlaying = false;
+
+async function processDecisionQueue() {
+  if (decisionPlaying) return;
+  decisionPlaying = true;
+  while (decisionQueue.length > 0) {
+    const job = decisionQueue.shift()!;
+    try {
+      await playChime(job.preset);
+      if (job.mode === "chime_and_speech" && job.spoken.trim().length > 0) {
+        await speakText(job.spoken);
+      }
+    } catch (err) {
+      console.warn("[audio] decision alert failed:", err);
+    }
+  }
+  decisionPlaying = false;
+}
+
+/** Play a chime (and optionally speak) for a new DecisionPanel item.
+ *
+ *  Guard items use an urgent "drop" preset to visibly distinguish
+ *  destructive-command prompts from ordinary elicitation questions.
+ *  Respects the same `overlay-muted` and `tts-mode` settings as
+ *  `playAlertSound`, so the existing user preferences carry over. */
+export function playDecisionAlert(kind: "guard" | "elicitation", spoken: string) {
+  if (getItem("overlay-muted") === "true") return;
+  const mode = (getItem("tts-mode") as TtsMode) || "off";
+  if (mode === "off") return;
+
+  const preset: ChimePreset =
+    kind === "guard"
+      ? "drop"
+      : ((getItem("chime-sound") as ChimePreset) || "ding_dong");
+
+  decisionQueue.push({ preset, spoken, mode });
+  processDecisionQueue();
+}
