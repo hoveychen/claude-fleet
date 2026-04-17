@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useState } from "react";
 import "./App.css";
 import { ConnectionDialog } from "./components/ConnectionDialog";
+import { LiteApp } from "./components/LiteApp";
 import { Onboarding } from "./components/Onboarding";
 import { SessionDetail } from "./components/SessionDetail";
 import { SessionList } from "./components/SessionList";
@@ -26,7 +27,7 @@ function computeUnseenFeatures(): OnboardingFeatureId[] {
 }
 
 function App() {
-  const { theme } = useUIStore();
+  const { theme, liteMode } = useUIStore();
   const { connection, setConnection, disconnect } = useConnectionStore();
 
   const [isMacOS, setIsMacOS] = useState(false);
@@ -148,12 +149,27 @@ function App() {
     setItem(WIZARD_COMPLETED_KEY, "1");
   }, []);
 
+  // Re-apply window decorations/size when the saved liteMode differs from the
+  // actual window state (e.g. first launch after a reload).
+  useEffect(() => {
+    invoke("set_lite_mode", { enabled: liteMode }).catch(() => {});
+  }, [liteMode]);
+
   // Show connection dialog until the user picks local or remote
   if (!connection) {
     return (
       <div className="app">
-        {isMacOS && <div className="drag_bar" data-tauri-drag-region />}
+        {isMacOS && !liteMode && <div className="drag_bar" data-tauri-drag-region />}
         <ConnectionDialog onConnected={handleConnected} />
+      </div>
+    );
+  }
+
+  if (liteMode) {
+    return (
+      <div className="app">
+        <LiteApp />
+        <WaitingAlerts />
       </div>
     );
   }

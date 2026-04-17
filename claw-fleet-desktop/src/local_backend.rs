@@ -416,9 +416,13 @@ impl LocalBackend {
                         if known.insert(id.clone()) {
                             // New request — read it and emit a Tauri event.
                             if let Some(mut req) = crate::guard::read_request(id) {
+                                let (ws, ai) =
+                                    resolve_session_display(&sess_guard, &req.session_id);
                                 if req.workspace_name.is_empty() {
-                                    req.workspace_name =
-                                        resolve_workspace_display(&sess_guard, &req.session_id);
+                                    req.workspace_name = ws;
+                                }
+                                if req.ai_title.is_none() {
+                                    req.ai_title = ai;
                                 }
                                 crate::log_debug(&format!(
                                     "[guard] new request: {} cmd={}",
@@ -447,9 +451,13 @@ impl LocalBackend {
                     for id in &pending {
                         if known.insert(id.clone()) {
                             if let Some(mut req) = crate::elicitation::read_request(id) {
+                                let (ws, ai) =
+                                    resolve_session_display(&sess_elicit, &req.session_id);
                                 if req.workspace_name.is_empty() {
-                                    req.workspace_name =
-                                        resolve_workspace_display(&sess_elicit, &req.session_id);
+                                    req.workspace_name = ws;
+                                }
+                                if req.ai_title.is_none() {
+                                    req.ai_title = ai;
                                 }
                                 crate::log_debug(&format!(
                                     "[elicitation] new request: {} questions={}",
@@ -532,18 +540,17 @@ fn indexer_thread(
 
 /// Resolve a display name (AI title preferred, falling back to workspace name)
 /// for a given session id. Returns an empty string if the session is unknown.
-fn resolve_workspace_display(
+/// Look up a session by id and return `(workspace_name, ai_title)` so decision
+/// cards can display the real workspace name alongside the AI-generated title
+/// without conflating them.
+fn resolve_session_display(
     sessions: &Arc<Mutex<Vec<SessionInfo>>>,
     session_id: &str,
-) -> String {
+) -> (String, Option<String>) {
     let list = sessions.lock().unwrap();
     list.iter()
         .find(|s| s.id == session_id)
-        .map(|s| {
-            s.ai_title
-                .clone()
-                .unwrap_or_else(|| s.workspace_name.clone())
-        })
+        .map(|s| (s.workspace_name.clone(), s.ai_title.clone()))
         .unwrap_or_default()
 }
 

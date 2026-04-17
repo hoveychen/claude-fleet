@@ -893,6 +893,10 @@
     "title": "Needs Your Attention",
     "dismiss_tip": "Click to dismiss"
   },
+  "lite": {
+    "enter": "Lite portrait mode",
+    "exit": "Exit lite mode"
+  },
   "overlay": {
     "popout": "Pop out assistant",
     "find": "Find assistant",

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useDecisionStore, useDetailStore, useSessionsStore, useUIStore } from "../store";
+import { useDecisionStore } from "../store";
 import { playDecisionAlert } from "../audio";
 import { safeMarkdownComponents } from "../markdown/safeLinks";
 import type {
@@ -17,14 +17,6 @@ import styles from "./DecisionPanel.module.css";
 
 function shortId(id: string): string {
   return id.length > 8 ? id.slice(0, 8) : id;
-}
-
-function navigateToSessionById(sessionId: string) {
-  const session = useSessionsStore.getState().sessions.find((s) => s.id === sessionId);
-  if (session) {
-    useUIStore.getState().setViewMode("list");
-    useDetailStore.getState().open(session);
-  }
 }
 
 // ── Guard card renderer ────────────────────────────────────────────────────
@@ -59,17 +51,11 @@ function GuardCard({ decision }: { decision: GuardDecision }) {
         {req.workspaceName && (
           <span className={styles.card_workspace}>{req.workspaceName}</span>
         )}
-        {req.sessionId && (
-          <button
-            type="button"
-            className={styles.card_session}
-            onClick={() => navigateToSessionById(req.sessionId)}
-            title={t("decision.open_session", "Open session")}
-          >
-            {shortId(req.sessionId)}
-          </button>
-        )}
       </div>
+
+      {req.aiTitle && (
+        <div className={styles.card_subtitle}>{req.aiTitle}</div>
+      )}
 
       <div className={styles.command}>{req.command}</div>
 
@@ -112,7 +98,7 @@ function ElicitationCard({ decision }: { decision: ElicitationDecision }) {
     setElicitationCustomAnswer,
     setElicitationStep,
   } = useDecisionStore();
-  const otherInputRef = useRef<HTMLInputElement>(null);
+  const otherInputRef = useRef<HTMLTextAreaElement>(null);
 
   const { step, request, selections, customAnswers } = decision;
   const total = request.questions.length;
@@ -173,17 +159,11 @@ function ElicitationCard({ decision }: { decision: ElicitationDecision }) {
         {request.workspaceName && (
           <span className={styles.card_workspace}>{request.workspaceName}</span>
         )}
-        {request.sessionId && (
-          <button
-            type="button"
-            className={styles.card_session}
-            onClick={() => navigateToSessionById(request.sessionId)}
-            title={t("decision.open_session", "Open session")}
-          >
-            {shortId(request.sessionId)}
-          </button>
-        )}
       </div>
+
+      {request.aiTitle && (
+        <div className={styles.card_subtitle}>{request.aiTitle}</div>
+      )}
 
       {total > 1 && (
         <div className={styles.elicitation_dots}>
@@ -273,7 +253,7 @@ function OptionsBlock({
   question: ElicitationDecision["request"]["questions"][number];
   selected: string[];
   onToggle: (id: string, questionText: string, label: string, multiSelect: boolean) => void;
-  otherInputRef: React.RefObject<HTMLInputElement | null>;
+  otherInputRef: React.RefObject<HTMLTextAreaElement | null>;
   customText: string;
   onCustomChange: (val: string) => void;
 }) {
@@ -292,6 +272,13 @@ function OptionsBlock({
   }, [firstWithPreview]);
 
   const focusedPreview = question.options.find((o) => o.label === focusedLabel)?.preview;
+
+  useEffect(() => {
+    const el = otherInputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [customText, otherInputRef]);
 
   const list = (
     <div className={styles.elicitation_options}>
@@ -323,13 +310,18 @@ function OptionsBlock({
         <span className={styles.elicitation_option_label}>
           {t("elicitation.other", "Other")}
         </span>
-        <input
+        <textarea
           ref={otherInputRef}
           className={styles.elicitation_other_input}
-          type="text"
+          rows={1}
           placeholder={t("elicitation.other_placeholder", "Type your answer…")}
           value={customText}
           onChange={(e) => onCustomChange(e.target.value)}
+          onInput={(e) => {
+            const el = e.currentTarget;
+            el.style.height = "auto";
+            el.style.height = `${el.scrollHeight}px`;
+          }}
         />
       </div>
     </div>
@@ -375,7 +367,7 @@ function tabLabel(d: PendingDecision): string {
 
 // ── Main panel ───────────────────────────────────────────────────────────
 
-export function DecisionPanel() {
+export function DecisionPanel({ compact = false }: { compact?: boolean } = {}) {
   const {
     decisions,
     activeDecisionId,
@@ -394,8 +386,8 @@ export function DecisionPanel() {
       const r = e.payload;
       if (!announcedIds.current.has(r.id)) {
         announcedIds.current.add(r.id);
-        const spoken = [r.workspaceName, r.toolName || r.commandSummary]
-          .filter(Boolean)
+        const spoken = [r.workspaceName, r.aiTitle, r.toolName || r.commandSummary]
+          .filter((s): s is string => !!s && s.length > 0)
           .join(" ");
         playDecisionAlert("guard", spoken);
       }
@@ -414,8 +406,8 @@ export function DecisionPanel() {
         announcedIds.current.add(r.id);
         const header = r.questions[0]?.header?.trim() ?? "";
         const fallback = r.questions[0]?.question ?? "";
-        const spoken = [r.workspaceName, header || fallback]
-          .filter((s) => s && s.length > 0)
+        const spoken = [r.workspaceName, r.aiTitle, header || fallback]
+          .filter((s): s is string => !!s && s.length > 0)
           .join(" ");
         playDecisionAlert("elicitation", spoken);
       }
@@ -440,18 +432,65 @@ export function DecisionPanel() {
     return () => window.removeEventListener("keydown", handler);
   }, [activeDecisionId, decisions, respond]);
 
-  if (decisions.length === 0) return null;
+  const cardAreaRef = useRef<HTMLDivElement>(null);
+  const [widthTier, setWidthTier] = useState(0);
 
-  const active = decisions.find((d) => d.id === activeDecisionId) ?? decisions[0];
+  const active = decisions.length > 0
+    ? (decisions.find((d) => d.id === activeDecisionId) ?? decisions[0])
+    : null;
 
   const hasPreview =
-    active.kind === "elicitation" &&
+    active?.kind === "elicitation" &&
     active.request.questions.some((q) => !q.multiSelect && q.options.some((o) => o.preview));
 
+  // Build responsive width tiers: if content overflows vertically, widen the
+  // panel step-by-step so markdown/long questions reflow wider instead of
+  // forcing a scrollbar. Upper bound 1400px or viewport minus gutter.
+  const widthTiers = useMemo(() => {
+    const base = hasPreview ? 820 : 460;
+    const vpMax = typeof window !== "undefined"
+      ? Math.min(window.innerWidth - 24, 1400)
+      : 1400;
+    const candidates = [base, 640, 820, 1040, 1200, vpMax];
+    const unique = Array.from(new Set(candidates.filter((w) => w >= base && w <= vpMax)));
+    unique.sort((a, b) => a - b);
+    return unique;
+  }, [hasPreview]);
+
+  // Reset tier when active decision changes.
+  useEffect(() => {
+    setWidthTier(0);
+  }, [active?.id]);
+
+  // Bump tier when the card area overflows vertically, until no overflow or
+  // we hit the maximum tier.
+  useEffect(() => {
+    const el = cardAreaRef.current;
+    if (!el) return;
+    const check = () => {
+      if (widthTier < widthTiers.length - 1 && el.scrollHeight > el.clientHeight + 2) {
+        setWidthTier((t) => Math.min(t + 1, widthTiers.length - 1));
+      }
+    };
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    const content = el.firstElementChild;
+    if (content) ro.observe(content);
+    check();
+    return () => ro.disconnect();
+  }, [widthTier, widthTiers, active?.id]);
+
+  if (!active) return null;
+
+  const currentWidth = widthTiers[Math.min(widthTier, widthTiers.length - 1)];
+
   return (
-    <div className={`${styles.panel} ${active.kind === "guard" ? styles.panel_guard : styles.panel_elicitation} ${hasPreview ? styles.panel_wide : ""}`}>
+    <div
+      className={`${styles.panel} ${active.kind === "guard" ? styles.panel_guard : styles.panel_elicitation} ${hasPreview ? styles.panel_wide : ""} ${compact ? styles.panel_compact : ""}`}
+      style={compact ? undefined : { width: `${currentWidth}px` }}
+    >
       {/* Card area — scrollable, shows the active decision */}
-      <div className={styles.card_area}>
+      <div className={styles.card_area} ref={cardAreaRef}>
         <DecisionCard key={active.id} decision={active} />
       </div>
 

@@ -893,6 +893,10 @@
     "title": "需要你的关注",
     "dismiss_tip": "点击忽略"
   },
+  "lite": {
+    "enter": "竖屏精简模式",
+    "exit": "退出精简模式"
+  },
   "overlay": {
     "popout": "弹出小助手",
     "find": "找到小助手",

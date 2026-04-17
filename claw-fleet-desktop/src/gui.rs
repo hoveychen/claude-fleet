@@ -1345,6 +1345,39 @@ fn show_main_window(app: tauri::AppHandle) {
     }
 }
 
+// Lite portrait mode — shrink main window to phone-like portrait strip and
+// drop decorations so it can sit at the screen edge. Disabling restores the
+// normal desktop layout. Dimensions are intentionally fixed to keep the CSS
+// simple; the user can still drag the window anywhere via the custom drag
+// region in LiteApp.
+#[tauri::command]
+fn set_lite_mode(app: tauri::AppHandle, enabled: bool) {
+    let Some(w) = app.get_webview_window("main") else { return };
+    if enabled {
+        let _ = w.set_decorations(false);
+        let _ = w.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
+            300.0, 520.0,
+        ))));
+        let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(340.0, 720.0)));
+        // Park it near the top-right of the current monitor so Boss can reach it.
+        if let Ok(Some(monitor)) = w.current_monitor() {
+            let size = monitor.size();
+            let scale = monitor.scale_factor();
+            let screen_w = size.width as f64 / scale;
+            let x = screen_w - 360.0;
+            let y = 40.0;
+            let _ = w.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
+        }
+    } else {
+        let _ = w.set_decorations(true);
+        let _ = w.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
+            900.0, 600.0,
+        ))));
+        let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(1280.0, 820.0)));
+        let _ = w.center();
+    }
+}
+
 #[tauri::command]
 fn open_session_from_overlay(app: tauri::AppHandle, jsonl_path: String) {
     let _ = app.emit("open-session", jsonl_path);
@@ -2078,6 +2111,7 @@ pub fn run() {
             toggle_overlay,
             center_overlay,
             show_main_window,
+            set_lite_mode,
             open_session_from_overlay,
             toggle_tray_panel,
             quit_app,

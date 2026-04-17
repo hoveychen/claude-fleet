@@ -18,7 +18,7 @@ function formatTime(ms: number): string {
 
 const WINDOW_MS = 5 * 60 * 1000;
 
-export function TokenSpeedChart() {
+export function TokenSpeedChart({ compact = false }: { compact?: boolean } = {}) {
   const { t } = useTranslation();
   const speedHistory = useSessionsStore((s) => s.speedHistory);
   const [collapsed, setCollapsed] = useCollapsed("token-speed-chart", false);
@@ -53,10 +53,10 @@ export function TokenSpeedChart() {
         speedHistory.length < 2 ? (
           <div className={styles.no_data}>{t("chart.no_data")}</div>
         ) : (
-          <ResponsiveContainer width="100%" height={80}>
+          <ResponsiveContainer width="100%" height={compact ? 56 : 80}>
             <AreaChart
               data={speedHistory}
-              margin={{ top: 4, right: 4, left: -20, bottom: 0 }}
+              margin={compact ? { top: 2, right: 2, left: 2, bottom: 0 } : { top: 4, right: 4, left: -20, bottom: 0 }}
             >
               <defs>
                 <linearGradient id="speedGrad" x1="0" y1="0" x2="0" y2="1">
@@ -64,24 +64,37 @@ export function TokenSpeedChart() {
                   <stop offset="95%" stopColor="var(--color-accent)" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <XAxis
-                dataKey="time"
-                type="number"
-                scale="time"
-                domain={[domainStart, domainEnd]}
-                tickFormatter={formatTime}
-                tick={{ fontSize: 9, fill: "var(--color-text-dim)" }}
-                tickLine={false}
-                axisLine={false}
-                interval="preserveStartEnd"
-                minTickGap={40}
-              />
-              <YAxis
-                tick={{ fontSize: 9, fill: "var(--color-text-dim)" }}
-                tickLine={false}
-                axisLine={false}
-                width={30}
-              />
+              {!compact && (
+                <XAxis
+                  dataKey="time"
+                  type="number"
+                  scale="time"
+                  domain={[domainStart, domainEnd]}
+                  tickFormatter={formatTime}
+                  tick={{ fontSize: 9, fill: "var(--color-text-dim)" }}
+                  tickLine={false}
+                  axisLine={false}
+                  interval="preserveStartEnd"
+                  minTickGap={40}
+                />
+              )}
+              {compact && (
+                <XAxis
+                  dataKey="time"
+                  type="number"
+                  scale="time"
+                  domain={[domainStart, domainEnd]}
+                  hide
+                />
+              )}
+              {!compact && (
+                <YAxis
+                  tick={{ fontSize: 9, fill: "var(--color-text-dim)" }}
+                  tickLine={false}
+                  axisLine={false}
+                  width={30}
+                />
+              )}
               <Tooltip
                 contentStyle={{
                   background: "var(--color-bg-secondary)",

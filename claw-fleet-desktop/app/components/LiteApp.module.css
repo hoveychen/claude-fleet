@@ -1,0 +1,109 @@
+.lite {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  background: var(--color-bg);
+  color: var(--color-text);
+  overflow: hidden;
+}
+
+.drag_bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--color-border, rgba(255, 255, 255, 0.08));
+  background: var(--color-bg-sidebar, rgba(0, 0, 0, 0.12));
+  -webkit-user-select: none;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.drag_title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-dim);
+  text-align: center;
+  letter-spacing: 0.04em;
+  cursor: default;
+}
+
+.exit_btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-dim);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.exit_btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text);
+}
+
+.body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.monitor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Session list scrolls between the monitors and the mascot anchor. */
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.empty {
+  font-size: 12px;
+  color: var(--color-text-dim);
+  text-align: center;
+  padding: 24px 12px;
+}
+
+/* Mascot anchored to the bottom. Constrained so it doesn't steal the list. */
+.mascot_slot {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 2px;
+  border-top: 1px solid var(--color-border, rgba(255, 255, 255, 0.06));
+}
+
+.mascot_slot > * {
+  max-width: 180px;
+}
+
+/* Session detail takes over the list + monitor area when a session is open. */
+.detail_area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}

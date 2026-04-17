@@ -138,15 +138,8 @@ input — do NOT add a \"let me type freely\" option yourself.\n\
 \n\
 1 question. Use the full report (markdown OK) as the `question` field.\n\
 Options (aim for 2–4 total):\n\
-- 2 guesses at {title_en}'s likely next ask (concrete next actions).\n\
-- 1 \"Wrap up — satisfied\" option, description notes that you'll record \
-  this as a positive pattern in memory.\n\
-- 1 \"Wrap up — dissatisfied\" option, description notes that you'll \
-  capture a lesson so this doesn't recur.\n\
-\n\
-When the user picks either wrap-up option in the follow-up turn, proactively \
-write a matching `feedback`-type or `lesson`-type entry into \
-`~/.claude/projects/.../memory/` per the auto-memory guidance.\n\
+- 2–3 guesses at {title_en}'s likely next ask (concrete next actions).\n\
+- 1 \"任务结束\" option to close out the turn with no further action.\n\
 \n\
 ### Case B — Report + pending decisions\n\
 \n\

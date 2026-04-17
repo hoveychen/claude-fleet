@@ -75,6 +75,10 @@ function handleIPC(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "kill_workspace_sessions":
     case "delete_connection":
     case "connect_remote":
+    case "set_lite_mode":
+    case "show_main_window":
+    case "respond_to_guard":
+    case "respond_to_elicitation":
       return null;
 
     case "list_skills":
@@ -257,5 +261,49 @@ export function installMocks() {
   // Install screenplay driver for video pipeline
   installScreenplayDriver();
 
+  // Decision-panel drivers — let developers trigger guard / elicitation
+  // decisions from the DevTools console to exercise the full-screen takeover
+  // (especially useful for the lite portrait mode).
+  (window as any).__mock_guard = (overrides: Record<string, unknown> = {}) => {
+    const id = `mock-guard-${Date.now()}`;
+    emit("guard-request", {
+      id,
+      sessionId: "sess-fleet-main",
+      workspaceName: "claw-fleet",
+      aiTitle: "Trying to rm -rf the universe",
+      toolName: "Bash",
+      command: "rm -rf /",
+      commandSummary: "Delete root filesystem",
+      riskTags: ["destructive", "filesystem"],
+      timestamp: new Date().toISOString(),
+      ...overrides,
+    });
+    return id;
+  };
+  (window as any).__mock_elicitation = (overrides: Record<string, unknown> = {}) => {
+    const id = `mock-elic-${Date.now()}`;
+    emit("elicitation-request", {
+      id,
+      sessionId: "sess-fleet-main",
+      workspaceName: "claw-fleet",
+      aiTitle: "Which approach should I take?",
+      timestamp: new Date().toISOString(),
+      questions: [
+        {
+          question: "要走哪条路？",
+          header: "路线",
+          multiSelect: false,
+          options: [
+            { label: "快而脏", description: "耦合紧，速度快" },
+            { label: "慢而干净", description: "保持边界，重构成本高" },
+          ],
+        },
+      ],
+      ...overrides,
+    });
+    return id;
+  };
+
   console.log("[mock] Tauri mock layer installed — running in demo mode");
+  console.log("[mock] Trigger decisions via __mock_guard() / __mock_elicitation() in DevTools");
 }

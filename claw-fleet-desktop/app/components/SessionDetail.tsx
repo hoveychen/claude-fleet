@@ -15,7 +15,7 @@ function shortId(id: string) {
   return id.slice(0, 8);
 }
 
-export function SessionDetail() {
+export function SessionDetail({ lite = false }: { lite?: boolean } = {}) {
   const { t } = useTranslation();
   const { session, messages, isLoading, searchQuery, close, open } = useDetailStore();
   const sessions = useSessionsStore((s) => s.sessions);
@@ -75,14 +75,16 @@ export function SessionDetail() {
   }, [liveSession, sessions]);
 
   return (
-      <div className={`${styles.root} ${liveSession ? styles.open : ""}`}>
+      <div className={`${styles.root} ${liveSession ? styles.open : ""} ${lite ? styles.lite : ""}`}>
         {liveSession && (
           <>
           {/* Header */}
           <div className={styles.header}>
             <div className={styles.header_row}>
               <div className={styles.header_left}>
-                <span className={styles.workspace}>{liveSession.workspaceName}</span>
+                <span className={styles.workspace} title={liveSession.workspaceName}>
+                  {liveSession.workspaceName}
+                </span>
                 {liveSession.isSubagent ? (
                   <span className={styles.tag_subagent}>
                     ⎇ {liveSession.agentType ?? t("subagent")}
@@ -90,38 +92,38 @@ export function SessionDetail() {
                 ) : (
                   <span className={styles.tag_main}>◈ {t("main")}</span>
                 )}
-                {liveSession.slug && (
-                  <span className={styles.slug}>{liveSession.slug}</span>
-                )}
               </div>
-              <div className={styles.header_right}>
-                {liveSession.ideName && (
-                  <span className={styles.ide}>{liveSession.ideName}</span>
-                )}
-                <span className={styles.tokens}>
-                  {liveSession.totalOutputTokens.toLocaleString()} {t("tokens_out")}
-                </span>
-                {(liveSession.totalCostUsd ?? 0) >= 0.005 && (
-                  <span className={styles.cost} title={t("card.tip_cost")}>
-                    ${liveSession.totalCostUsd.toFixed(2)}
-                  </span>
-                )}
-                {liveSession.contextPercent != null && (
-                  <span
-                    className={`${styles.context} ${liveSession.contextPercent >= 0.8 ? styles.context_high : ""}`}
-                    title={t("card.tip_context", { percent: Math.round(liveSession.contextPercent * 100) })}
-                  >
-                    ctx {Math.round(liveSession.contextPercent * 100)}%
-                  </span>
-                )}
-                <button className={styles.close_btn} onClick={close}>
-                  ✕
-                </button>
-              </div>
+              <button className={styles.close_btn} onClick={close} title={t("common.close") || "Close"}>
+                ✕
+              </button>
             </div>
             {liveSession.aiTitle && (
               <div className={styles.ai_title}>{liveSession.aiTitle}</div>
             )}
+            <div className={styles.meta_row}>
+              {liveSession.slug && (
+                <span className={styles.slug}>{liveSession.slug}</span>
+              )}
+              {liveSession.ideName && (
+                <span className={styles.ide}>{liveSession.ideName}</span>
+              )}
+              <span className={styles.tokens} title={t("tokens_out")}>
+                {liveSession.totalOutputTokens.toLocaleString()} {t("tokens_out")}
+              </span>
+              {(liveSession.totalCostUsd ?? 0) >= 0.005 && (
+                <span className={styles.cost} title={t("card.tip_cost")}>
+                  ${liveSession.totalCostUsd.toFixed(2)}
+                </span>
+              )}
+              {liveSession.contextPercent != null && (
+                <span
+                  className={`${styles.context} ${liveSession.contextPercent >= 0.8 ? styles.context_high : ""}`}
+                  title={t("card.tip_context", { percent: Math.round(liveSession.contextPercent * 100) })}
+                >
+                  ctx {Math.round(liveSession.contextPercent * 100)}%
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Subagent tabs */}

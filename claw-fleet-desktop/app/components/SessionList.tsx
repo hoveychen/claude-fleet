@@ -38,7 +38,7 @@ export function SessionList() {
   const { t } = useTranslation();
   const { sessions, refresh, setSessions, scanReady, setScanReady } = useSessionsStore();
   const { session: viewedSession, open } = useDetailStore();
-  const { viewMode, setViewMode } = useUIStore();
+  const { viewMode, setViewMode, setLiteMode } = useUIStore();
   const { connection } = useConnectionStore();
   const unreadCriticalCount = useAuditStore((s) => s.unreadCriticalCount);
   const [filter, setFilter] = useState("");
@@ -294,6 +294,18 @@ export function SessionList() {
                 {isRemote ? t("settings.remote") : t("settings.local")}
               </span>
             </div>
+            <button
+              className={styles.footer_mobile_btn}
+              onClick={(e) => { e.stopPropagation(); setLiteMode(true); }}
+              title={t("lite.enter")}
+            >
+              {/* Dock-to-right-strip glyph — distinct from the mobile phone icon */}
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="1.5" y="2.5" width="13" height="11" rx="1.3" />
+                <rect x="10" y="2.5" width="4.5" height="11" rx="1.3" fill="currentColor" fillOpacity="0.35" stroke="none" />
+                <line x1="10" y1="2.5" x2="10" y2="13.5" />
+              </svg>
+            </button>
             <button
               className={`${styles.footer_mobile_btn} ${mobileActive ? styles.footer_mobile_active : ""}`}
               onClick={(e) => { e.stopPropagation(); setShowMobileAccess(true); }}

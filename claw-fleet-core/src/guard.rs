@@ -32,6 +32,9 @@ pub struct GuardRequest {
     pub id: String,
     pub session_id: String,
     pub workspace_name: String,
+    /// AI-generated session title (distinct from workspace_name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_title: Option<String>,
     pub tool_name: String,
     pub command: String,
     pub command_summary: String,

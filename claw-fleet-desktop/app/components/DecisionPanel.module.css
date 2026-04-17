@@ -204,6 +204,15 @@
   flex-shrink: 0;
 }
 
+.card_subtitle {
+  font-size: 12px;
+  color: var(--color-text);
+  opacity: 0.85;
+  line-height: 1.4;
+  margin-bottom: 8px;
+  word-break: break-word;
+}
+
 .card_session {
   font-size: 11px;
   font-family: var(--font-mono);
@@ -290,6 +299,28 @@
   background: var(--color-bg);
   padding: 1px 4px;
   border-radius: 3px;
+}
+
+.analysis pre,
+.elicitation_question_text pre {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--color-bg);
+  padding: 6px 8px;
+  border-radius: 4px;
+  margin: 0.3em 0;
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.analysis pre code,
+.elicitation_question_text pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  white-space: inherit;
 }
 
 .analysis strong,
@@ -545,11 +576,16 @@
   background: transparent;
   border: none;
   outline: none;
-  font-size: 11px;
+  font-size: 14px;
+  line-height: 1.5;
   color: var(--color-text);
   font-family: inherit;
   padding: 0;
   width: 100%;
+  resize: none;
+  overflow: hidden;
+  min-height: 1.5em;
+  box-sizing: border-box;
 }
 
 .elicitation_other_input::placeholder {
@@ -559,4 +595,25 @@
 /* Spacer between left (Decline) and right (Back/Next/Submit) buttons */
 .actions_spacer {
   flex: 1;
+}
+
+/* ── Compact (lite portrait) mode: fill the whole window ─────────────────── */
+.panel_compact {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  transform: none;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  animation: none;
+}
+
+.panel_compact::before {
+  display: none;
 }

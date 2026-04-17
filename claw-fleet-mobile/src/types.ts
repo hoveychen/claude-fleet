@@ -84,6 +84,7 @@ export interface GuardRequest {
   id: string;
   sessionId: string;
   workspaceName: string;
+  aiTitle?: string | null;
   toolName: string;
   command: string;
   commandSummary: string;
@@ -118,6 +119,7 @@ export interface ElicitationRequest {
   id: string;
   sessionId: string;
   workspaceName: string;
+  aiTitle?: string | null;
   questions: ElicitationQuestion[];
   timestamp: string;
 }
