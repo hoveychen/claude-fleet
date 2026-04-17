@@ -45,6 +45,7 @@ export const ONBOARDING_FEATURES = [
   "appearance",
   "notifications",
   "hooks_guard_elicitation",
+  "global_ask",
 ] as const;
 
 export type OnboardingFeatureId = (typeof ONBOARDING_FEATURES)[number];

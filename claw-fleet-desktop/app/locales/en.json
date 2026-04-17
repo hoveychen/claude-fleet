@@ -364,6 +364,14 @@
       "elicitation_mock_a1": "PostgreSQL",
       "elicitation_mock_a2": "SQLite"
     },
+    "interaction_mode": {
+      "title": "New: Global AskUserQuestion Mode",
+      "description": "Route every Claude Code final response — reports, follow-ups, clarifications — through AskUserQuestion so they all appear as Fleet decision cards instead of terminal text. Only affects Claude Code; Cursor / Codex are unaffected. Requires Elicitation.",
+      "mock_q": "Migration finished — 47 files updated, 3 tests failing. What's next?",
+      "mock_a1": "Fix the failing tests",
+      "mock_a2": "Roll back the migration",
+      "mock_a3": "Show me the failures"
+    },
     "copy_hint": "Click to copy"
   },
   "mascot": {

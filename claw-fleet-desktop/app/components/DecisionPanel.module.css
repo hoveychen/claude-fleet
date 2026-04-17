@@ -10,7 +10,7 @@
   flex-direction: column;
   width: 460px;
   max-width: calc(100vw - 24px);
-  max-height: 60vh;
+  max-height: calc(100vh - 24px);
   border-radius: 10px;
   border: 1.5px solid #2b6cb0;
   box-shadow:
@@ -399,9 +399,6 @@
   color: var(--color-text);
   margin-bottom: 6px;
   line-height: 1.4;
-  max-height: 32vh;
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 .elicitation_header {

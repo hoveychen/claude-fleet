@@ -45,6 +45,7 @@ interface HookSetupPlan {
   alreadyInstalled: boolean;
   guardInstalled: boolean;
   elicitationInstalled: boolean;
+  interactionModeInstalled: boolean;
 }
 
 type NotificationMode = "all" | "user_action" | "none";
@@ -657,6 +658,73 @@ function MockElicitationPreview() {
   );
 }
 
+// ── Global AskUserQuestion (Interaction Mode) card ───────────────────────
+
+function MockGlobalAskPreview() {
+  const { t } = useTranslation();
+  return (
+    <div className={styles.mock_decision}>
+      <div className={styles.mock_decision_header}>
+        <svg className={styles.mock_icon_question} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+        <span className={styles.mock_decision_title}>{t("elicitation.title")}</span>
+      </div>
+      <div className={styles.mock_question}>{t("onboarding.interaction_mode.mock_q")}</div>
+      <div className={styles.mock_options}>
+        <span className={`${styles.mock_option} ${styles.mock_option_selected}`}>{t("onboarding.interaction_mode.mock_a1")}</span>
+        <span className={styles.mock_option}>{t("onboarding.interaction_mode.mock_a2")}</span>
+        <span className={styles.mock_option}>{t("onboarding.interaction_mode.mock_a3")}</span>
+      </div>
+    </div>
+  );
+}
+
+function InteractionModeCard({
+  enabled,
+  onToggle,
+  elicitationEnabled,
+}: {
+  enabled: boolean;
+  onToggle: (enabled: boolean) => void;
+  elicitationEnabled: boolean;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <div className={`${styles.card} ${styles.card_info}`}>
+      <div className={styles.card_header}>
+        <span className={styles.card_icon}>&#x1F4AC;</span>
+        <span className={styles.card_title}>{t("onboarding.interaction_mode.title")}</span>
+      </div>
+      <p className={styles.card_description}>{t("onboarding.interaction_mode.description")}</p>
+
+      <div className={styles.hook_feature_section}>
+        <div className={styles.hook_feature_header}>
+          <div className={styles.hook_feature_text}>
+            <span className={styles.settings_label}>{t("settings.interaction_mode_enabled")}</span>
+            {!elicitationEnabled && (
+              <p className={styles.hint}>{t("settings.interaction_mode_requires_elicitation")}</p>
+            )}
+          </div>
+          <label className={styles.hook_feature_toggle}>
+            <input
+              type="checkbox"
+              checked={enabled}
+              disabled={!elicitationEnabled}
+              onChange={(e) => onToggle(e.target.checked)}
+              className={styles.source_checkbox}
+            />
+          </label>
+        </div>
+        <MockGlobalAskPreview />
+      </div>
+    </div>
+  );
+}
+
 // ── Hooks + Guard + Elicitation setup card ───────────────────────────────
 
 function HooksSetupCard({
@@ -844,10 +912,35 @@ export function Onboarding({ mode, onDismiss }: { mode: OnboardingMode; onDismis
         await invoke("apply_elicitation_hook");
       } else {
         await invoke("remove_elicitation_hook");
+        if (getItem("interaction-mode-enabled") === "true") {
+          setInteractionModeEnabled(false);
+          setItem("interaction-mode-enabled", "false");
+          await invoke("remove_interaction_mode").catch(() => {});
+        }
       }
       invoke<HookSetupPlan>("get_hooks_setup_plan").then(setHooksPlan).catch(() => {});
     } catch (e) {
       console.error("elicitation hook toggle failed:", e);
+    }
+  }, []);
+
+  // ── Interaction mode (global AskUserQuestion) state ────────────────────
+  const [interactionModeEnabled, setInteractionModeEnabled] = useState(
+    () => getItem("interaction-mode-enabled") === "true",
+  );
+
+  const handleToggleInteractionMode = useCallback(async (enabled: boolean) => {
+    setInteractionModeEnabled(enabled);
+    setItem("interaction-mode-enabled", enabled ? "true" : "false");
+    try {
+      if (enabled) {
+        await invoke("apply_interaction_mode");
+      } else {
+        await invoke("remove_interaction_mode");
+      }
+      invoke<HookSetupPlan>("get_hooks_setup_plan").then(setHooksPlan).catch(() => {});
+    } catch (e) {
+      console.error("interaction mode toggle failed:", e);
     }
   }, []);
 
@@ -1068,6 +1161,16 @@ export function Onboarding({ mode, onDismiss }: { mode: OnboardingMode; onDismis
             </div>
           )}
 
+          {unseenFeatures.has("global_ask") && (
+            <div className={styles.cards}>
+              <InteractionModeCard
+                enabled={interactionModeEnabled}
+                onToggle={handleToggleInteractionMode}
+                elicitationEnabled={elicitationEnabled}
+              />
+            </div>
+          )}
+
           <div className={styles.footer}>
             <button className={styles.btn_primary} onClick={handleDismiss}>
               {t("onboarding.dismiss")}
@@ -1149,6 +1252,13 @@ export function Onboarding({ mode, onDismiss }: { mode: OnboardingMode; onDismis
                         onToggleGuard={handleToggleGuard}
                         elicitationEnabled={elicitationEnabled}
                         onToggleElicitation={handleToggleElicitation}
+                      />
+                    )}
+                    {hasClaudeCode && (
+                      <InteractionModeCard
+                        enabled={interactionModeEnabled}
+                        onToggle={handleToggleInteractionMode}
+                        elicitationEnabled={elicitationEnabled}
                       />
                     )}
                   </div>

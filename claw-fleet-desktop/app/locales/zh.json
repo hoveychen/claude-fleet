@@ -364,6 +364,14 @@
       "elicitation_mock_a1": "PostgreSQL",
       "elicitation_mock_a2": "SQLite"
     },
+    "interaction_mode": {
+      "title": "新功能：全局 AskUserQuestion 模式",
+      "description": "让 Claude Code 的所有最终输出（结果汇报、追问、澄清）都走 AskUserQuestion，以 Fleet 决策卡片的形式展示，不再在终端看到收尾文本。仅对 Claude Code 生效，不影响 Cursor / Codex 等。需要先启用「问答拦截」。",
+      "mock_q": "迁移完成 —— 47 个文件已更新，3 个测试失败。下一步？",
+      "mock_a1": "修复失败的测试",
+      "mock_a2": "回滚迁移",
+      "mock_a3": "先给我看失败详情"
+    },
     "copy_hint": "点击复制"
   },
   "mascot": {
